@@ -1,13 +1,46 @@
+import { useEffect, useState } from 'react'
 import Header from './components/Header.jsx'
 import Product from './components/Product.jsx'
 import Tshirt from './components/Tshirt.jsx'
 import Hoodie from './components/Hoodie.jsx'
+import Designer from './components/Designer.jsx'
+
+const ROUTES = { '#design-tshirt': 'tshirt', '#design-hoodie': 'hoodie' }
+
+function useHash() {
+  const [hash, setHash] = useState(window.location.hash)
+  useEffect(() => {
+    const onChange = () => { setHash(window.location.hash); window.scrollTo(0, 0) }
+    window.addEventListener('hashchange', onChange)
+    return () => window.removeEventListener('hashchange', onChange)
+  }, [])
+  return hash
+}
 
 export default function App() {
+  const hash = useHash()
+  const [cartCount, setCartCount] = useState(0)
+  const [step, setStep] = useState(1)
+  const product = ROUTES[hash]
+
+  useEffect(() => { setStep(1) }, [product])
+
   return (
     <>
+    {product ? (
+      <section className="design-page">
+        <Header cartCount={cartCount} step={step} />
+        <Designer
+          product={product}
+          onChangeProduct={(p) => { window.location.hash = p === 'hoodie' ? 'design-hoodie' : 'design-tshirt' }}
+          onAddToBag={() => setCartCount((c) => c + 1)}
+          step={step}
+          setStep={setStep}
+        />
+      </section>
+    ) : (
     <section className="hero">
-      <Header cartCount={0} />
+      <Header cartCount={cartCount} />
 
       <Product label="Design T-Shirt" href="#design-tshirt">
         <Tshirt />
@@ -32,8 +65,9 @@ export default function App() {
       <div className="corner l">Custom clothing<br />made by you</div>
       <div className="corner r">For a more<br />original tomorrow</div>
     </section>
+    )}
     <footer className="footer">
-      Partnered by <b>ZEVENX</b>
+      Powered by <b>ZEVENX</b>
     </footer>
     </>
   )

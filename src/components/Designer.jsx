@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import Garment3D, { OVERLAY_SCALE } from './Garment3D.jsx'
 
 const PRODUCTS = {
   tshirt: {
@@ -31,8 +32,8 @@ const BACK_PRINT_PRICE = 5
 const VIEWS = [
   { id: 'front', label: 'Front', angle: 0 },
   { id: 'back', label: 'Back', angle: 180 },
-  { id: 'left', label: 'Left', angle: -55 },
-  { id: 'right', label: 'Right', angle: 55 },
+  { id: 'left', label: 'Left', angle: -50 },
+  { id: 'right', label: 'Right', angle: 50 },
 ]
 
 const FONTS = [
@@ -67,6 +68,7 @@ const viewFromAngle = (angle) => {
   return best
 }
 const sideOf = (viewId) => (viewId === 'back' ? 'back' : 'front')
+const THUMB_ANGLES = VIEWS.map((v) => v.angle)
 let nextId = 1
 
 /* ---------- garment stage ---------- */
@@ -98,14 +100,13 @@ function Layer({ layer, selected, onPointerDown }) {
   )
 }
 
-function Face({ side, product, color, layers, interactive, activeSide, selectedId, onSelect, onMove }) {
-  const p = PRODUCTS[product]
+// Invisible, draggable stand-ins for the layers printed on the 3D garment,
+// lined up with the print area while the garment faces the camera.
+function PrintOverlay({ print, side, layers, selectedId, onSelect, onMove }) {
   const sideLayers = layers.filter((l) => l.side === side)
   const areaRef = useRef(null)
-  const showArea = interactive && side === activeSide
 
   const startDrag = (e, layer) => {
-    if (!interactive) return
     e.stopPropagation()
     onSelect(layer.id)
     const rect = areaRef.current.getBoundingClientRect()
@@ -128,31 +129,44 @@ function Face({ side, product, color, layers, interactive, activeSide, selectedI
   }
 
   return (
-    <div className={`face ${side}`}>
-      <div className="garment">
-        <img src={p.img} alt={`${color.name} ${p.name}`} draggable="false"
-          style={{ filter: color.bright ? `brightness(${color.bright})` : undefined }} />
-        <div className="tint" style={{ background: color.tint }} />
-      </div>
-      <div ref={areaRef} className={`print-area${showArea ? ' active' : ''}`} style={p.print}>
-        {showArea && <><i className="h tl" /><i className="h tr" /><i className="h bl" /><i className="h br" /></>}
-        {showArea && sideLayers.length === 0 && <span className="placeholder">Your<br />design<br />here</span>}
+    <div className="print-overlay" style={{ transform: `scale(${OVERLAY_SCALE})` }}>
+      <div ref={areaRef} className="print-area active" style={print}>
+        <i className="h tl" /><i className="h tr" /><i className="h bl" /><i className="h br" />
+        {sideLayers.length === 0 && <span className="placeholder">Your<br />design<br />here</span>}
         {sideLayers.map((l) => (
-          <Layer key={l.id} layer={l} selected={interactive && l.id === selectedId}
-            onPointerDown={(e) => startDrag(e, l)} />
+          <Layer key={l.id} layer={l} selected={l.id === selectedId} onPointerDown={(e) => startDrag(e, l)} />
         ))}
       </div>
     </div>
   )
 }
 
-function Garment({ angle, animate = true, ...props }) {
-  return (
-    <div className="spin" style={{ transform: `rotateY(${angle}deg)`, transition: animate ? undefined : 'none' }}>
-      <Face side="front" {...props} />
-      <Face side="back" {...props} />
-    </div>
-  )
+// Drag horizontally to spin; optionally snap to the nearest view on release.
+function useSpin(snap) {
+  const [angle, setAngle] = useState(0)
+  const [dragging, setDragging] = useState(false)
+  const onPointerDown = (e) => {
+    const startX = e.clientX, startAngle = angle
+    let moved = false
+    const el = e.currentTarget
+    el.setPointerCapture(e.pointerId)
+    const move = (ev) => {
+      const dx = ev.clientX - startX
+      if (Math.abs(dx) > 3) { moved = true; setDragging(true) }
+      if (moved) setAngle(startAngle + dx * 0.45)
+    }
+    const up = () => {
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      el.removeEventListener('pointercancel', up)
+      setDragging(false)
+      if (snap) setAngle((a) => nearestEquivalent(viewFromAngle(a).angle, a))
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+    el.addEventListener('pointercancel', up)
+  }
+  return { angle, setAngle, dragging, onPointerDown }
 }
 
 /* ---------- side panel tabs ---------- */
@@ -267,8 +281,10 @@ export default function Designer({ product, onChangeProduct, onAddToBag, step, s
   const [tab, setTab] = useState('design')
   const [layers, setLayers] = useState([])
   const [selectedId, setSelectedId] = useState(null)
-  const [angle, setAngle] = useState(0)
-  const [dragging, setDragging] = useState(false)
+  const { angle, setAngle, dragging, onPointerDown: spinDown } = useSpin(true)
+  const reviewSpin = useSpin(false)
+  const [settled, setSettled] = useState(true)
+  const [thumbs, setThumbs] = useState([])
 
   const color = p.colors[Math.min(colorIdx, p.colors.length - 1)]
   const view = viewFromAngle(angle)
@@ -299,44 +315,22 @@ export default function Designer({ product, onChangeProduct, onAddToBag, step, s
   const stepView = (dir) => goToView(VIEWS[(VIEWS.indexOf(view) + dir + VIEWS.length) % VIEWS.length])
 
   // drag on empty stage space to spin the garment
-  const onStageDown = (e) => {
-    setSelectedId(null)
-    const startX = e.clientX, startAngle = angle
-    let moved = false
-    const el = e.currentTarget
-    el.setPointerCapture(e.pointerId)
-    const move = (ev) => {
-      const dx = ev.clientX - startX
-      if (Math.abs(dx) > 3) { moved = true; setDragging(true) }
-      if (moved) setAngle(startAngle + dx * 0.45)
-    }
-    const up = () => {
-      el.removeEventListener('pointermove', move)
-      el.removeEventListener('pointerup', up)
-      el.removeEventListener('pointercancel', up)
-      setDragging(false)
-      setAngle((a) => nearestEquivalent(viewFromAngle(a).angle, a))
-    }
-    el.addEventListener('pointermove', move)
-    el.addEventListener('pointerup', up)
-    el.addEventListener('pointercancel', up)
-  }
+  const onStageDown = (e) => { setSelectedId(null); spinDown(e) }
 
   const hasBack = layers.some((l) => l.side === 'back')
   const total = p.price + (hasBack ? BACK_PRINT_PRICE : 0)
-  const garmentProps = { product, color, layers }
+  const garmentProps = { product: p, color, layers }
 
   if (step === 2) {
     return (
       <div className="review">
-        <div className="review-previews">
-          {['front', 'back'].map((s) => (
-            <figure key={s}>
-              <div className="stage mini-stage"><Garment angle={s === 'back' ? 180 : 0} {...garmentProps} /></div>
-              <figcaption>{s}</figcaption>
-            </figure>
-          ))}
-        </div>
+        <figure className="review-preview">
+          <div className="stage" onPointerDown={reviewSpin.onPointerDown}>
+            <Garment3D {...garmentProps} angle={reviewSpin.angle} immediate={reviewSpin.dragging} autoRotate={!reviewSpin.dragging} />
+            <div className="floor" />
+          </div>
+          <figcaption>Drag to rotate</figcaption>
+        </figure>
         <aside className="panel summary">
           <h2>Your {p.name}</h2>
           <dl>
@@ -402,15 +396,20 @@ export default function Designer({ product, onChangeProduct, onAddToBag, step, s
       {/* centre: garment */}
       <section className="canvas">
         <div className="stage" onPointerDown={onStageDown}>
-          <Garment angle={angle} animate={!dragging} {...garmentProps} interactive activeSide={activeSide}
-            selectedId={selectedId} onSelect={setSelectedId} onMove={updateLayer} />
+          <Garment3D {...garmentProps} angle={angle} immediate={dragging} onSettle={setSettled}
+            thumbAngles={THUMB_ANGLES} onThumbs={setThumbs} />
+          <div className="floor" />
+          {settled && !dragging && (view.id === 'front' || view.id === 'back') && (
+            <PrintOverlay print={p.print} side={activeSide} layers={layers}
+              selectedId={selectedId} onSelect={setSelectedId} onMove={updateLayer} />
+          )}
         </div>
         <div className="drag-hint">Drag to rotate</div>
         <div className="thumbs">
           <button className="arrow" aria-label="Previous view" onClick={() => stepView(-1)}>‹</button>
-          {VIEWS.map((v) => (
+          {VIEWS.map((v, i) => (
             <button key={v.id} className={`thumb${v.id === view.id ? ' on' : ''}`} onClick={() => goToView(v)} aria-label={v.label}>
-              <div className="stage mini-stage"><Garment angle={v.angle} {...garmentProps} /></div>
+              {thumbs[i] && <img src={thumbs[i]} alt="" draggable="false" />}
             </button>
           ))}
           <button className="arrow" aria-label="Next view" onClick={() => stepView(1)}>›</button>

@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import Header from './components/Header.jsx'
 import Product from './components/Product.jsx'
 import Tshirt from './components/Tshirt.jsx'
 import Hoodie from './components/Hoodie.jsx'
-import Designer from './components/Designer.jsx'
+// three.js lives in the designer, so only load it when a design page is opened
+const Designer = lazy(() => import('./components/Designer.jsx'))
 
 const ROUTES = { '#design-tshirt': 'tshirt', '#design-hoodie': 'hoodie' }
 
@@ -30,6 +31,7 @@ export default function App() {
     {product ? (
       <section className="design-page">
         <Header cartCount={cartCount} step={step} />
+        <Suspense fallback={null}>
         <Designer
           product={product}
           onChangeProduct={(p) => { window.location.hash = p === 'hoodie' ? 'design-hoodie' : 'design-tshirt' }}
@@ -37,6 +39,7 @@ export default function App() {
           step={step}
           setStep={setStep}
         />
+        </Suspense>
       </section>
     ) : (
     <section className="hero">

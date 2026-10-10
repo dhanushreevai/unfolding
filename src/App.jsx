@@ -70,7 +70,7 @@ export default function App() {
     </section>
     )}
     <footer className="footer">
-      Powered by <b>ZEVENX</b>
+      Powered by <a href="https://www.thezevenx.com/" target="_blank" rel="noopener noreferrer">ZEVENX</a>
     </footer>
     </>
   )

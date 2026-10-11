@@ -30,12 +30,13 @@ export default function App() {
     <>
     {product ? (
       <section className="design-page">
-        <Header cartCount={cartCount} step={step} />
+        <Header cartCount={cartCount} step={step <= 4 ? step : null} secure={step === 3 || step === 4} />
         <Suspense fallback={null}>
         <Designer
           product={product}
           onChangeProduct={(p) => { window.location.hash = p === 'hoodie' ? 'design-hoodie' : 'design-tshirt' }}
-          onAddToBag={() => setCartCount((c) => c + 1)}
+          onAddToBag={() => setCartCount(1)}
+          onOrderPlaced={() => setCartCount(0)}
           step={step}
           setStep={setStep}
         />

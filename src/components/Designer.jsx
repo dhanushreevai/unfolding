@@ -1,40 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import Garment3D, { OVERLAY_SCALE } from './Garment3D.jsx'
-
-const PRODUCTS = {
-  tshirt: {
-    name: 'T-Shirt', img: '/tshirt.jpg', price: 29,
-    print: { left: '30%', top: '23%', width: '40%', height: '40%' },
-    colors: [
-      { name: 'White', swatch: '#f2f2f2', tint: '#ffffff' },
-      { name: 'Black', swatch: '#0d0d0d', tint: '#262626' },
-      { name: 'Grey', swatch: '#b5b5b5', tint: '#b0b0b0' },
-      { name: 'Charcoal', swatch: '#3a3f47', tint: '#474c55' },
-      { name: 'Sand', swatch: '#d8cfc2', tint: '#ddd2c2' },
-    ],
-  },
-  hoodie: {
-    name: 'Hoodie', img: '/hoodie.jpg', price: 49,
-    print: { left: '32%', top: '27%', width: '36%', height: '27%' },
-    colors: [
-      { name: 'Black', swatch: '#0d0d0d', tint: '#ffffff', bright: 1 },
-      { name: 'Charcoal', swatch: '#3a3f47', tint: '#c9d0da', bright: 2.2 },
-      { name: 'Grey', swatch: '#8d8d8d', tint: '#ffffff', bright: 3.6 },
-      { name: 'Navy', swatch: '#1f2a44', tint: '#6f86c4', bright: 3 },
-      { name: 'Sand', swatch: '#d8cfc2', tint: '#e8d9c0', bright: 4 },
-    ],
-  },
-}
-
-const SIZES = ['S', 'M', 'L', 'XL', 'XXL']
-const BACK_PRINT_PRICE = 5
-
-const VIEWS = [
-  { id: 'front', label: 'Front', angle: 0 },
-  { id: 'back', label: 'Back', angle: 180 },
-  { id: 'left', label: 'Left', angle: -50 },
-  { id: 'right', label: 'Right', angle: 50 },
-]
+import Review from './Review.jsx'
+import { Details, Payment, emptyCustomer } from './Checkout.jsx'
+import Confirmation from './Confirmation.jsx'
+import { PRODUCTS, SIZES, VIEWS, nearestEquivalent, viewFromAngle, useSpin } from './garment.js'
 
 const FONTS = [
   { label: 'Bold', family: "'Montserrat', sans-serif", weight: 900 },
@@ -56,17 +25,6 @@ const CLIPART = [
   { name: 'Arrow', d: 'M4 11h12.2l-5.6-5.6L12 4l8 8-8 8-1.4-1.4 5.6-5.6H4z' },
 ]
 
-const nearestEquivalent = (target, current) => target + 360 * Math.round((current - target) / 360)
-const viewFromAngle = (angle) => {
-  const n = ((angle % 360) + 360) % 360
-  let best = VIEWS[0], bestDist = Infinity
-  for (const v of VIEWS) {
-    const a = (v.angle + 360) % 360
-    const d = Math.min(Math.abs(n - a), 360 - Math.abs(n - a))
-    if (d < bestDist) { best = v; bestDist = d }
-  }
-  return best
-}
 const sideOf = (viewId) => (viewId === 'back' ? 'back' : 'front')
 const THUMB_ANGLES = VIEWS.map((v) => v.angle)
 let nextId = 1
@@ -139,34 +97,6 @@ function PrintOverlay({ print, side, layers, selectedId, onSelect, onMove }) {
       </div>
     </div>
   )
-}
-
-// Drag horizontally to spin; optionally snap to the nearest view on release.
-function useSpin(snap) {
-  const [angle, setAngle] = useState(0)
-  const [dragging, setDragging] = useState(false)
-  const onPointerDown = (e) => {
-    const startX = e.clientX, startAngle = angle
-    let moved = false
-    const el = e.currentTarget
-    el.setPointerCapture(e.pointerId)
-    const move = (ev) => {
-      const dx = ev.clientX - startX
-      if (Math.abs(dx) > 3) { moved = true; setDragging(true) }
-      if (moved) setAngle(startAngle + dx * 0.45)
-    }
-    const up = () => {
-      el.removeEventListener('pointermove', move)
-      el.removeEventListener('pointerup', up)
-      el.removeEventListener('pointercancel', up)
-      setDragging(false)
-      if (snap) setAngle((a) => nearestEquivalent(viewFromAngle(a).angle, a))
-    }
-    el.addEventListener('pointermove', move)
-    el.addEventListener('pointerup', up)
-    el.addEventListener('pointercancel', up)
-  }
-  return { angle, setAngle, dragging, onPointerDown }
 }
 
 /* ---------- side panel tabs ---------- */
@@ -248,7 +178,7 @@ function ClipartTab({ selected, onAdd, onChange }) {
       <div className="clip-grid">
         {CLIPART.map((c) => (
           <button key={c.name} className="clip" aria-label={c.name} title={c.name}
-            onClick={() => onAdd({ type: 'clip', d: c.d, color: active })}>
+            onClick={() => onAdd({ type: 'clip', d: c.d, name: c.name, color: active })}>
             <svg viewBox="0 0 24 24" fill="currentColor"><path d={c.d} /></svg>
           </button>
         ))}
@@ -274,7 +204,7 @@ const ICONS = {
 }
 const ALIGN = { center: { x: 50 }, top: { y: 18 }, middle: { y: 50 }, bottom: { y: 82 } }
 
-export default function Designer({ product, onChangeProduct, onAddToBag, step, setStep }) {
+export default function Designer({ product, onChangeProduct, onAddToBag, onOrderPlaced, step, setStep }) {
   const p = PRODUCTS[product]
   const [colorIdx, setColorIdx] = useState(0)
   const [size, setSize] = useState('L')
@@ -282,9 +212,14 @@ export default function Designer({ product, onChangeProduct, onAddToBag, step, s
   const [layers, setLayers] = useState([])
   const [selectedId, setSelectedId] = useState(null)
   const { angle, setAngle, dragging, onPointerDown: spinDown } = useSpin(true)
-  const reviewSpin = useSpin(false)
   const [settled, setSettled] = useState(true)
   const [thumbs, setThumbs] = useState([])
+  // checkout
+  const [previews, setPreviews] = useState([])
+  const [customer, setCustomer] = useState(emptyCustomer)
+  const [delivery, setDelivery] = useState('standard')
+  const [paymentMethod, setPaymentMethod] = useState('card')
+  const [placed, setPlaced] = useState(null)
 
   const color = p.colors[Math.min(colorIdx, p.colors.length - 1)]
   const view = viewFromAngle(angle)
@@ -317,49 +252,38 @@ export default function Designer({ product, onChangeProduct, onAddToBag, step, s
   // drag on empty stage space to spin the garment
   const onStageDown = (e) => { setSelectedId(null); spinDown(e) }
 
-  const hasBack = layers.some((l) => l.side === 'back')
-  const total = p.price + (hasBack ? BACK_PRINT_PRICE : 0)
   const garmentProps = { product: p, color, layers }
+
+  const showcase = { product: p, color, layers, thumbUrls: previews, onThumbs: setPreviews }
+  const startOver = () => { setLayers([]); setPlaced(null); setStep(1) }
 
   if (step === 2) {
     return (
-      <div className="review">
-        <figure className="review-preview">
-          <div className="stage" onPointerDown={reviewSpin.onPointerDown}>
-            <Garment3D {...garmentProps} angle={reviewSpin.angle} immediate={reviewSpin.dragging} autoRotate={!reviewSpin.dragging} />
-            <div className="floor" />
-          </div>
-          <figcaption>Drag to rotate</figcaption>
-        </figure>
-        <aside className="panel summary">
-          <h2>Your {p.name}</h2>
-          <dl>
-            <dt>Colour</dt><dd>{color.name}</dd>
-            <dt>Size</dt><dd>{size}</dd>
-            <dt>Front print</dt><dd>{layers.filter((l) => l.side === 'front').length || 'None'}</dd>
-            <dt>Back print</dt><dd>{hasBack ? `+$${BACK_PRINT_PRICE}` : 'None'}</dd>
-            <dt className="total">Total</dt><dd className="total">${total}</dd>
-          </dl>
-          <button className="pill light big" onClick={() => { onAddToBag(); setStep(3) }}>
-            Add to Bag <span>→</span>
-          </button>
-          <button className="pill ghost" onClick={() => setStep(1)}>← Back to design</button>
-        </aside>
-      </div>
+      <Review productKey={product} product={p} color={color} size={size} layers={layers}
+        previews={previews} onPreviews={setPreviews}
+        onEdit={() => setStep(1)} onBuy={() => { onAddToBag(); setStep(3) }} />
     )
   }
 
   if (step === 3) {
     return (
-      <div className="done">
-        <div className="done-check">✓</div>
-        <h2>Added to your bag</h2>
-        <p>Your {color.name.toLowerCase()} {p.name.toLowerCase()} (size {size}) is ready for checkout.</p>
-        <div className="done-actions">
-          <button className="pill ghost" onClick={() => { setLayers([]); setStep(1) }}>Design another</button>
-          <a className="pill light" href="#">Continue shopping</a>
-        </div>
-      </div>
+      <Details showcase={showcase} customer={customer} setCustomer={setCustomer}
+        delivery={delivery} setDelivery={setDelivery} onBack={() => setStep(2)} onNext={() => setStep(4)} />
+    )
+  }
+
+  if (step === 4) {
+    return (
+      <Payment showcase={showcase} onBack={() => setStep(3)}
+        order={{ productKey: product, product: p, color, size, layers, previews, customer, delivery, paymentMethod, setPaymentMethod }}
+        onPlaced={(saved) => { setPlaced(saved); onOrderPlaced(); setStep(5) }} />
+    )
+  }
+
+  if (step === 5 && placed) {
+    return (
+      <Confirmation placed={placed} customer={customer}
+        showcase={{ product: p, color, layers }} onDesignAnother={startOver} />
     )
   }
 

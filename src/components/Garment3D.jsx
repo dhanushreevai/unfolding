@@ -4,8 +4,8 @@ import * as THREE from 'three'
 // Texture canvas size — matches the stage's 410:480 aspect ratio.
 export const TEX_W = 820
 export const TEX_H = 960
-const GRID_W = 120
-const GRID_H = 140
+const GRID_W = 150
+const GRID_H = 176
 const PLANE_H = 1
 const PLANE_W = TEX_W / TEX_H
 const FOV = 16
@@ -123,6 +123,8 @@ function buildGeometry(keep) {
     front.push(a, c, b, b, c, d)
     back.push(V + a, V + b, V + c, V + b, V + d, V + c)
   }
+  let lowest = 0
+  for (let k = 0; k < V; k++) if (inside[k]) lowest = Math.max(lowest, Math.floor(k / cols))
   const geo = new THREE.BufferGeometry()
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
@@ -130,7 +132,47 @@ function buildGeometry(keep) {
   geo.addGroup(0, front.length, 0)
   geo.addGroup(front.length, back.length, 1)
   geo.computeVertexNormals()
+  geo.userData.hemY = 0.5 - lowest / GRID_H
   return geo
+}
+
+function bumpCanvases(photo, alpha) {
+  const lumC = document.createElement('canvas')
+  lumC.width = TEX_W; lumC.height = TEX_H
+  const lctx = lumC.getContext('2d', { willReadFrequently: true })
+  const g = new ImageData(TEX_W, TEX_H)
+  for (let i = 0; i < alpha.length; i++) {
+    const o = i * 4
+    const v = photo.data[o] * 0.3 + photo.data[o + 1] * 0.59 + photo.data[o + 2] * 0.11
+    g.data[o] = g.data[o + 1] = g.data[o + 2] = v
+    g.data[o + 3] = 255
+  }
+  lctx.putImageData(g, 0, 0)
+  const blurC = document.createElement('canvas')
+  blurC.width = TEX_W; blurC.height = TEX_H
+  const bctx = blurC.getContext('2d', { willReadFrequently: true })
+  bctx.filter = 'blur(10px)'
+  bctx.drawImage(lumC, 0, 0)
+  const blurred = bctx.getImageData(0, 0, TEX_W, TEX_H).data
+  const hasBlur = bctx.filter === 'blur(10px)'
+  const make = (mirror) => {
+    const c = document.createElement('canvas')
+    c.width = TEX_W; c.height = TEX_H
+    const out = new ImageData(TEX_W, TEX_H)
+    for (let y = 0; y < TEX_H; y++) {
+      for (let x = 0; x < TEX_W; x++) {
+        const src = y * TEX_W + (mirror ? TEX_W - 1 - x : x)
+        const o = (y * TEX_W + x) * 4
+        const detail = hasBlur ? g.data[src * 4] - blurred[src * 4] : 0
+        const v = alpha[src] > 127 ? Math.max(0, Math.min(255, 128 + detail * 1.6)) : 128
+        out.data[o] = out.data[o + 1] = out.data[o + 2] = v
+        out.data[o + 3] = 255
+      }
+    }
+    c.getContext('2d').putImageData(out, 0, 0)
+    return c
+  }
+  return { front: make(false), back: make(true) }
 }
 
 const shapes = new Map()
@@ -156,7 +198,10 @@ function loadShape(src) {
         alpha[i] = maskData[i * 4]
         keep[i] = alpha[i] > 127 ? 1 : 0
       }
-      return { photo, masks: maskCanvases(alpha), geometry: buildGeometry(keep), tinted: new Map() }
+      return {
+        photo, masks: maskCanvases(alpha), bumps: bumpCanvases(photo, alpha),
+        geometry: buildGeometry(keep), tinted: new Map(),
+      }
     }))
   }
   return shapes.get(src)
@@ -254,12 +299,13 @@ function compose(canvas, shape, color, layers, print, side, onAsset) {
 /* ---------- component ---------- */
 
 export default function Garment3D({
-  product, color, layers, angle, immediate = false, autoRotate = false, onSettle, onThumbs, thumbAngles,
+  product, color, layers, angle, immediate = false, autoRotate = false, showcase = false,
+  onSettle, onThumbs, thumbAngles,
 }) {
   const hostRef = useRef(null)
   const three = useRef(null)
   const live = useRef({})
-  live.current = { angle, immediate, autoRotate, onSettle }
+  live.current = { angle, immediate, autoRotate, showcase, onSettle }
   const [shape, setShape] = useState(null)
   const [assetTick, setAssetTick] = useState(0)
 
@@ -280,7 +326,14 @@ export default function Garment3D({
 
     const scene = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(FOV, TEX_W / TEX_H, 0.1, 20)
-    camera.position.set(0, 0, CAM_DIST)
+    if (showcase) {
+      // look slightly down onto the garment so the floor shadow reads
+      camera.position.set(0, 0.24, CAM_DIST * 1.1)
+      camera.lookAt(0, -0.035, 0)
+    } else {
+      // straight on, so the HTML print-area overlay lines up with the texture
+      camera.position.set(0, 0, CAM_DIST)
+    }
 
     // three.js lights are physical: ~PI total irradiance reproduces the photo's own brightness head-on
     scene.add(new THREE.AmbientLight(0xffffff, 1.7))
@@ -300,12 +353,35 @@ export default function Garment3D({
       t.anisotropy = renderer.capabilities.getMaxAnisotropy()
       return t
     })
-    const materials = textures.map((map) => new THREE.MeshStandardMaterial({
-      map, side: THREE.DoubleSide, alphaTest: 0.5, alphaToCoverage: true, roughness: 0.95, metalness: 0,
+    const bumpMaps = ['front', 'back'].map(() => new THREE.CanvasTexture(document.createElement('canvas')))
+    const materials = textures.map((map, i) => new THREE.MeshPhysicalMaterial({
+      map, bumpMap: bumpMaps[i], bumpScale: 1.4,
+      side: THREE.DoubleSide, alphaTest: 0.5, alphaToCoverage: true, roughness: 0.92, metalness: 0,
+      // soft cloth sheen at grazing angles
+      sheen: 1, sheenRoughness: 0.6, sheenColor: new THREE.Color(0.09, 0.09, 0.1),
     }))
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), materials)
     const pivot = new THREE.Group()
     pivot.add(mesh)
+
+    // contact shadow on the floor, turning with the garment
+    const shadowCanvas = document.createElement('canvas')
+    shadowCanvas.width = shadowCanvas.height = 256
+    const sctx = shadowCanvas.getContext('2d')
+    const grad = sctx.createRadialGradient(128, 128, 0, 128, 128, 128)
+    grad.addColorStop(0, 'rgba(0,0,0,0.75)')
+    grad.addColorStop(0.45, 'rgba(0,0,0,0.4)')
+    grad.addColorStop(1, 'rgba(0,0,0,0)')
+    sctx.fillStyle = grad
+    sctx.fillRect(0, 0, 256, 256)
+    const shadowTex = new THREE.CanvasTexture(shadowCanvas)
+    const shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(PLANE_W * 1.05, DEPTH * 5),
+      new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false }),
+    )
+    shadow.rotation.x = -Math.PI / 2
+    shadow.visible = showcase
+    pivot.add(shadow)
     scene.add(pivot)
 
     const resize = () => {
@@ -317,7 +393,10 @@ export default function Garment3D({
     const ro = new ResizeObserver(resize)
     ro.observe(host)
 
-    const st = { renderer, scene, camera, pivot, mesh, textures, dirty: true, current: live.current.angle, spin: 0, settled: true }
+    const st = {
+      renderer, scene, camera, pivot, mesh, shadow, textures, bumpMaps,
+      dirty: true, current: live.current.angle, spin: 0, sway: 0, settled: true,
+    }
     three.current = st
     resize()
 
@@ -325,13 +404,16 @@ export default function Garment3D({
     const frame = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
-      const { angle: target, immediate: imm, autoRotate: auto, onSettle: settleCb } = live.current
+      const { angle: target, immediate: imm, autoRotate: auto, showcase: show, onSettle: settleCb } = live.current
       if (imm) st.current = target
       else st.current += (target - st.current) * (1 - Math.exp(-dt * 9))
       if (auto) st.spin += dt * 22
+      // a slow, gentle sway while idle; eases out while the user drags
+      st.sway += dt
+      const swayAmount = show && !imm ? Math.sin(st.sway * 0.8) * 4 : 0
       const moving = Math.abs(target - st.current) > 0.05
-      if (moving || auto || st.dirty) {
-        pivot.rotation.y = rad(st.current + st.spin)
+      if (moving || auto || show || st.dirty) {
+        pivot.rotation.y = rad(st.current + st.spin + swayAmount)
         renderer.render(scene, camera)
         st.dirty = false
       }
@@ -345,7 +427,11 @@ export default function Garment3D({
       cancelAnimationFrame(raf)
       ro.disconnect()
       textures.forEach((t) => t.dispose())
+      bumpMaps.forEach((t) => t.dispose())
       materials.forEach((m) => m.dispose())
+      shadowTex.dispose()
+      shadow.geometry.dispose()
+      shadow.material.dispose()
       renderer.dispose()
       renderer.domElement.remove()
       three.current = null
@@ -356,6 +442,11 @@ export default function Garment3D({
     const st = three.current
     if (!st || !shape) return
     st.mesh.geometry = shape.geometry
+    st.shadow.position.y = shape.geometry.userData.hemY - 0.004
+    ;['front', 'back'].forEach((side, i) => {
+      st.bumpMaps[i].image = shape.bumps[side]
+      st.bumpMaps[i].needsUpdate = true
+    })
     st.dirty = true
   }, [shape])
 
@@ -378,7 +469,7 @@ export default function Garment3D({
     const id = setTimeout(() => {
       const { renderer, scene, camera, pivot } = st
       const thumb = document.createElement('canvas')
-      thumb.width = 164; thumb.height = 192
+      thumb.width = 300; thumb.height = 352
       const tctx = thumb.getContext('2d')
       const urls = thumbAngles.map((a) => {
         pivot.rotation.y = rad(a)

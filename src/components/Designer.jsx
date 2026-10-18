@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import Garment3D, { OVERLAY_SCALE } from './Garment3D.jsx'
+import Garment3D from './Garment3D.jsx'
 import Review from './Review.jsx'
 import { Details, Payment, emptyCustomer } from './Checkout.jsx'
 import Confirmation from './Confirmation.jsx'
@@ -87,7 +87,7 @@ function PrintOverlay({ print, side, layers, selectedId, onSelect, onMove }) {
   }
 
   return (
-    <div className="print-overlay" style={{ transform: `scale(${OVERLAY_SCALE})` }}>
+    <div className="print-overlay">
       <div ref={areaRef} className="print-area active" style={print}>
         <i className="h tl" /><i className="h tr" /><i className="h bl" /><i className="h br" />
         {sideLayers.length === 0 && <span className="placeholder">Your<br />design<br />here</span>}
@@ -214,6 +214,7 @@ export default function Designer({ product, onChangeProduct, onAddToBag, onOrder
   const { angle, setAngle, dragging, onPointerDown: spinDown } = useSpin(true)
   const [settled, setSettled] = useState(true)
   const [thumbs, setThumbs] = useState([])
+  const [printRect, setPrintRect] = useState(null)
   // checkout
   const [previews, setPreviews] = useState([])
   const [customer, setCustomer] = useState(emptyCustomer)
@@ -320,11 +321,11 @@ export default function Designer({ product, onChangeProduct, onAddToBag, onOrder
       {/* centre: garment */}
       <section className="canvas">
         <div className="stage" onPointerDown={onStageDown}>
-          <Garment3D {...garmentProps} angle={angle} immediate={dragging} onSettle={setSettled}
+          <Garment3D {...garmentProps} angle={angle} immediate={dragging} onSettle={setSettled} onPrintRect={setPrintRect}
             thumbAngles={THUMB_ANGLES} onThumbs={setThumbs} />
           <div className="floor" />
-          {settled && !dragging && (view.id === 'front' || view.id === 'back') && (
-            <PrintOverlay print={p.print} side={activeSide} layers={layers}
+          {settled && !dragging && printRect && (view.id === 'front' || view.id === 'back') && (
+            <PrintOverlay print={printRect} side={activeSide} layers={layers}
               selectedId={selectedId} onSelect={setSelectedId} onMove={updateLayer} />
           )}
         </div>

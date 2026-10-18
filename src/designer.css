@@ -61,7 +61,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .h.tl { left: -4px; top: -4px; } .h.tr { right: -4px; top: -4px; } .h.bl { left: -4px; bottom: -4px; } .h.br { right: -4px; bottom: -4px; }
 .placeholder {
   position: absolute; inset: 0; display: grid; place-items: center; text-align: center; pointer-events: none;
-  font-family: 'Montserrat', sans-serif; font-weight: 900; text-transform: uppercase; line-height: .95;
+  font-family: var(--display); font-weight: 700; text-transform: uppercase; line-height: .95;
   font-size: 15cqw; color: rgba(255,255,255,.9); mix-blend-mode: difference;
 }
 .layer { position: absolute; cursor: move; line-height: 1; touch-action: none; }
@@ -167,7 +167,7 @@ button.back-link { background: none; border: 0; cursor: pointer; padding: 0; tex
 
 .review-summary { display: flex; flex-direction: column; padding-top: 40px; }
 .looks-good {
-  font-family: 'Montserrat', sans-serif; font-weight: 900; text-transform: uppercase;
+  font-family: var(--display); font-weight: 700; text-transform: uppercase;
   font-size: clamp(34px, 3.3vw, 50px); line-height: 1; letter-spacing: -.01em; white-space: nowrap;
 }
 .review-sub { margin-top: 18px; font-size: 11px; letter-spacing: .3em; line-height: 1.8; text-transform: uppercase; color: rgba(255,255,255,.75); }
@@ -190,7 +190,7 @@ button.back-link { background: none; border: 0; cursor: pointer; padding: 0; tex
 /* done */
 .order-done { min-height: 60vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; }
 .order-done-check { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: #fff; color: #000; font-size: 28px; }
-.order-done h2 { font-family: 'Montserrat', sans-serif; font-weight: 900; text-transform: uppercase; font-size: 32px; }
+.order-done h2 { font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: 32px; }
 .order-done p { color: var(--muted); }
 .order-done-actions { display: flex; gap: 12px; margin-top: 10px; }
 
@@ -206,11 +206,11 @@ button.back-link { background: none; border: 0; cursor: pointer; padding: 0; tex
 .checkout-visual { min-width: 0; padding-top: 10px; }
 .checkout-form { min-width: 0; display: flex; flex-direction: column; padding-left: 48px; border-left: 1px solid var(--border); }
 .checkout .back-link { margin-bottom: 18px; }
-.checkout-title { font-family: 'Montserrat', sans-serif; font-weight: 900; text-transform: uppercase; font-size: clamp(30px, 2.6vw, 38px); line-height: 1; }
+.checkout-title { font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: clamp(30px, 2.6vw, 38px); line-height: 1; }
 .checkout-sub { margin-top: 10px; font-size: 11px; letter-spacing: .28em; text-transform: uppercase; color: rgba(255,255,255,.75); }
 .step-of { font-size: 11px; letter-spacing: .28em; text-transform: uppercase; color: rgba(255,255,255,.75); margin-bottom: 8px; }
-.checkout-h2 { margin: 30px 0 14px; display: flex; align-items: baseline; gap: 14px; font-family: 'Montserrat', sans-serif; font-weight: 900; font-size: 17px; letter-spacing: .06em; text-transform: uppercase; }
-.checkout-h2 small { font-family: 'Poppins', sans-serif; font-weight: 400; font-size: 9px; letter-spacing: .25em; color: rgba(255,255,255,.6); }
+.checkout-h2 { margin: 30px 0 14px; display: flex; align-items: baseline; gap: 14px; font-family: var(--display); font-weight: 700; font-size: 17px; letter-spacing: .06em; text-transform: uppercase; }
+.checkout-h2 small { font-family: var(--display); font-weight: 400; font-size: 9px; letter-spacing: .25em; color: rgba(255,255,255,.6); }
 
 .fields { margin-top: 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .field-box {
@@ -284,7 +284,7 @@ button.back-link { background: none; border: 0; cursor: pointer; padding: 0; tex
 .confirm { position: static; max-width: 760px; margin: 0 auto; padding-bottom: 80px; display: flex; flex-direction: column; align-items: center; text-align: center; }
 .confirm-check { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; border: 1.5px solid #7fdc9a; color: #7fdc9a; }
 .confirm-kicker { margin-top: 18px; font-size: 13px; letter-spacing: .3em; text-transform: uppercase; }
-.confirm-title { margin-top: 6px; font-family: 'Montserrat', sans-serif; font-weight: 900; text-transform: uppercase; font-size: clamp(34px, 4.4vw, 54px); line-height: 1; }
+.confirm-title { margin-top: 6px; font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: clamp(34px, 4.4vw, 54px); line-height: 1; }
 .confirm-id { margin-top: 12px; font-size: 19px; }
 .confirm-text { margin-top: 14px; max-width: 520px; font-size: 13px; line-height: 1.7; color: rgba(255,255,255,.75); }
 .confirm-text b { color: #fff; font-weight: 500; overflow-wrap: anywhere; }

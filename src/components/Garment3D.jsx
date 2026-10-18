@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 
 // Texture canvas size — matches the stage's 410:480 aspect ratio.
 export const TEX_W = 820
@@ -204,12 +203,16 @@ function synthBack(photo, alpha) {
   const fine = median > 100 ? maskedBlur(4, 2) : maskedBlur(9, 3)
   const coarse = maskedBlur(22, 3)
   const out = new ImageData(TEX_W, TEX_H)
-  let seed = 1234567
-  const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff
-  const grainAmount = median > 100 ? 7 : 6
+  // the photo's own knit / fleece texture (fine detail only), softly limited so strong
+  // front features like seams and drawstrings don't carry over
+  const lum = new Float32Array(N)
+  for (let i = 0; i < N; i++) lum[i] = lumAt(photo.data, i * 4)
+  const low = boxBlur(boxBlur(Float32Array.from(lum), TEX_W, TEX_H, 2), TEX_W, TEX_H, 2)
+  const limit = median > 100 ? 6 : 2.5
   for (let i = 0; i < N; i++) {
     const o = i * 4
-    const grain = (rand() - 0.5) * grainAmount
+    const d = alpha[i] > 127 ? lum[i] - low[i] : 0
+    const grain = (d * limit) / (limit + Math.abs(d))
     const t = Math.min(1, fine.w[i] / 0.6)
     for (let c = 0; c < 3; c++) {
       const vf = fine.w[i] > 0.01 ? fine.ch[c][i] / fine.w[i] : 0
@@ -422,6 +425,34 @@ function compose(canvas, shape, color, layers, print, side, onAsset) {
   ctx.globalCompositeOperation = 'source-over'
 }
 
+/* ---------- material ---------- */
+
+// The photos already carry real studio lighting, so they're shown unlit and untouched when the
+// garment faces the camera. As it turns, each point is relit relative to how it faced the light
+// in the photo: surfaces turning away darken, surfaces turning towards the light lift slightly.
+function photoMaterial(map, isBack) {
+  const mat = new THREE.MeshBasicMaterial({
+    map, side: THREE.DoubleSide, alphaTest: 0.5, alphaToCoverage: true, toneMapped: false,
+  })
+  mat.onBeforeCompile = (shader) => {
+    // the back's texture represents the garment turned 180 degrees towards the camera
+    shader.uniforms.uFlip = { value: isBack ? -1 : 1 }
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uFlip;\nvarying vec3 vRestN;\nvarying vec3 vWorldN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRestN = vec3(normal.x * uFlip, normal.y, normal.z * uFlip);\nvWorldN = normalize(mat3(modelMatrix) * normal);')
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRestN;\nvarying vec3 vWorldN;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+      {
+        vec3 L = normalize(vec3(0.35, 0.45, 1.0)); // roughly where the product shots were lit from
+        float lit = max(dot(normalize(vWorldN), L), 0.0) * 0.8 + 0.2;
+        float was = max(dot(normalize(vRestN), L), 0.0) * 0.8 + 0.2;
+        diffuseColor.rgb *= clamp(lit / was, 0.3, 1.12);
+      }`)
+  }
+  return mat
+}
+
 /* ---------- component ---------- */
 
 export default function Garment3D({
@@ -472,20 +503,6 @@ export default function Garment3D({
       camera.position.set(0, 0, CAM_DIST)
     }
 
-    // three.js lights are physical: ~PI total irradiance reproduces the photo's own brightness head-on
-    // soft studio-room reflections so light wraps around the fabric; flat ambient fills the rest
-    const pmrem = new THREE.PMREMGenerator(renderer)
-    const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
-    scene.environment = envMap
-    scene.environmentIntensity = 0.3
-    scene.add(new THREE.AmbientLight(0xffffff, 0.85))
-    const key = new THREE.DirectionalLight(0xffffff, 1.6)
-    key.position.set(1.4, 1.6, 3)
-    const fill = new THREE.DirectionalLight(0xdfe6ff, 0.55)
-    fill.position.set(-2.2, 0.4, 1.4)
-    const rim = new THREE.DirectionalLight(0xffffff, 1.0)
-    rim.position.set(-0.6, 1.2, -3)
-    scene.add(key, fill, rim)
 
     const textures = ['front', 'back'].map(() => {
       const c = document.createElement('canvas')
@@ -496,13 +513,7 @@ export default function Garment3D({
       return t
     })
     const bumpMaps = ['front', 'back'].map(() => new THREE.CanvasTexture(document.createElement('canvas')))
-    const materials = textures.map((map, i) => new THREE.MeshPhysicalMaterial({
-      map, bumpMap: bumpMaps[i], bumpScale: 1.4,
-      side: THREE.DoubleSide, alphaTest: 0.5, alphaToCoverage: true, roughness: 0.92, metalness: 0,
-      specularIntensity: 0.25, // cotton barely reflects; keeps dark colours rich
-      // soft cloth sheen at grazing angles
-      sheen: 1, sheenRoughness: 0.6, sheenColor: new THREE.Color(0.09, 0.09, 0.1),
-    }))
+    const materials = textures.map((map, i) => photoMaterial(map, i === 1))
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), materials)
     const pivot = new THREE.Group()
     pivot.add(mesh)
@@ -575,8 +586,6 @@ export default function Garment3D({
       shadowTex.dispose()
       shadow.geometry.dispose()
       shadow.material.dispose()
-      envMap.dispose()
-      pmrem.dispose()
       renderer.dispose()
       renderer.domElement.remove()
       three.current = null

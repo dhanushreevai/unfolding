@@ -3,23 +3,25 @@
 
 export const PRODUCTS = {
   tshirt: {
-    name: 'T-Shirt', model: 'tshirt', img: '/tshirt.jpg', price: 29, fabric: '100% Cotton (200 GSM)',
+    name: 'T-Shirt', img: '/tshirt.jpg', price: 29, fabric: '100% Cotton (200 GSM)',
+    print: { left: '30.9%', top: '23%', width: '40%', height: '40%' },
     colors: [
-      { name: 'White', swatch: '#f2f2f2' },
-      { name: 'Black', swatch: '#0d0d0d' },
-      { name: 'Grey', swatch: '#b5b5b5' },
-      { name: 'Charcoal', swatch: '#3a3f47' },
-      { name: 'Sand', swatch: '#d8cfc2' },
+      { name: 'White', swatch: '#f2f2f2', tint: '#ffffff' },
+      { name: 'Black', swatch: '#0d0d0d', tint: '#262626' },
+      { name: 'Grey', swatch: '#b5b5b5', tint: '#b0b0b0' },
+      { name: 'Charcoal', swatch: '#3a3f47', tint: '#474c55' },
+      { name: 'Sand', swatch: '#d8cfc2', tint: '#ddd2c2' },
     ],
   },
   hoodie: {
-    name: 'Hoodie', model: 'hoodie', img: '/hoodie.jpg', price: 49, fabric: '80% Cotton, 20% Polyester (320 GSM)',
+    name: 'Hoodie', img: '/hoodie.jpg', price: 49, fabric: '80% Cotton, 20% Polyester (320 GSM)',
+    print: { left: '32.5%', top: '27%', width: '36%', height: '27%' },
     colors: [
-      { name: 'Black', swatch: '#0d0d0d' },
-      { name: 'Charcoal', swatch: '#3a3f47' },
-      { name: 'Grey', swatch: '#8d8d8d' },
-      { name: 'Navy', swatch: '#1f2a44' },
-      { name: 'Sand', swatch: '#d8cfc2' },
+      { name: 'Black', swatch: '#0d0d0d', tint: '#ffffff', bright: 1 },
+      { name: 'Charcoal', swatch: '#3a3f47', tint: '#c9d0da', bright: 2.2 },
+      { name: 'Grey', swatch: '#8d8d8d', tint: '#ffffff', bright: 3.6 },
+      { name: 'Navy', swatch: '#1f2a44', tint: '#6f86c4', bright: 3 },
+      { name: 'Sand', swatch: '#d8cfc2', tint: '#e8d9c0', bright: 4 },
     ],
   },
 }

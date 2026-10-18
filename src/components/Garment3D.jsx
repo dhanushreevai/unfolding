@@ -2,441 +2,335 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 
-/* ---------- patterns ---------- */
-// Garments are modelled in code (roughly metres). The body texture holds a straight-on view of
-// the front (left half) and back (right half), so a print's x/y on the garment maps 1:1 to pixels.
-
-const W_REF = 0.34
-const Y_MIN = -0.62
-const Y_MAX = 0.42
-const PX = 1600 // texture pixels per unit
-const TEX_W = Math.round(4 * W_REF * PX)
-const TEX_H = Math.round((Y_MAX - Y_MIN) * PX)
-const FOV = 22
-const STAGE_ASPECT = 410 / 480
-
-const MODELS = {
-  tshirt: {
-    hem: -0.45, shoulder: 0.17, neckRise: 0.085,
-    width: [[0, 0.236], [0.35, 0.231], [0.72, 0.244], [1, 0.248]],
-    depthFront: [[0, 0.084], [0.6, 0.104], [1, 0.098]],
-    depthBack: [[0, 0.082], [0.6, 0.092], [1, 0.092]],
-    neck: { w: 0.082, d: 0.068, frontDrop: 0.05 },
-    folds: 1.7,
-    sleeve: { base: [0.181, 0.106, 0], dir: [0.74, -0.67, 0], back: 0.05, length: 0.27, ra: [0.08, 0.07], rb: [0.058, 0.048] },
-    collar: 0.0075,
-    print: { x0: -0.115, x1: 0.115, y0: -0.13, y1: 0.165 },
-  },
-  hoodie: {
-    hem: -0.55, band: 0.07, shoulder: 0.16, neckRise: 0.06,
-    width: [[0, 0.232], [0.09, 0.24], [0.15, 0.272], [0.5, 0.277], [1, 0.28]],
-    depthFront: [[0, 0.1], [0.5, 0.125], [1, 0.115]],
-    depthBack: [[0, 0.098], [0.5, 0.11], [1, 0.108]],
-    neck: { w: 0.1, d: 0.082, frontDrop: 0.02 },
-    folds: 2,
-    // drop shoulders, full sleeves hanging beside the body, bunching above wide ribbed cuffs
-    sleeve: { bend: { center: [0.15, -0.035], radius: 0.15, endAngle: 0.1 }, back: 0.07, length: 0.68, ra: [0.09, 0.075], rb: [0.085, 0.068], cuff: 0.07, cuffScale: 0.78, bunch: 0.045 },
-    hood: { center: [0, 0.245, -0.035], radii: [0.215, 0.125, 0.175], facing: [0, 0.96, 0.28], open: 0.5, vee: 1.15, bottom: 2.75, rim: 0.016 },
-    strings: { spread: 0.035, end: 0.0 },
-    pocket: { top: -0.19, bottom: -0.47, topHalf: 0.135, bottomHalf: 0.17 },
-    print: { x0: -0.11, x1: 0.11, y0: -0.15, y1: 0.12 },
-  },
-}
+// Texture canvas size — matches the stage's 410:480 aspect ratio.
+export const TEX_W = 820
+export const TEX_H = 960
+const GRID_W = 150
+const GRID_H = 176
+const PLANE_H = 1
+const PLANE_W = TEX_W / TEX_H
+const FOV = 16
+const CAM_DIST = PLANE_H / 2 / Math.tan(((FOV / 2) * Math.PI) / 180)
+const DEPTH = 0.085 // max half-thickness of the garment body
+const ROUND = 0.2 // distance from the edge over which the body rounds off
+// The print area sits on the bulged surface, slightly nearer the camera than z=0.
+export const OVERLAY_SCALE = CAM_DIST / (CAM_DIST - DEPTH)
 
 const rad = (d) => (d * Math.PI) / 180
-const smoothstep = (a, b, x) => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
-  return t * t * (3 - 2 * t)
-}
-const spow = (v, e) => Math.sign(v) * Math.pow(Math.abs(v), e)
-function table(rows, t) {
-  for (let i = 1; i < rows.length; i++) {
-    if (t <= rows[i][0]) {
-      const [t0, v0] = rows[i - 1], [t1, v1] = rows[i]
-      const k = (t - t0) / (t1 - t0)
-      return v0 + (v1 - v0) * k * k * (3 - 2 * k)
-    }
-  }
-  return rows[rows.length - 1][1]
-}
 
-function hash3(x, y, z) {
-  let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(z, 1440662683)
-  h = Math.imul(h ^ (h >>> 13), 1274126177)
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967295
-}
-function vnoise(x, y, z) {
-  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z)
-  const f = (v) => v * v * (3 - 2 * v)
-  const u = f(x - xi), v = f(y - yi), w = f(z - zi)
-  const l = (a, b, t) => a + (b - a) * t
-  const c = (dx, dy, dz) => hash3(xi + dx, yi + dy, zi + dz)
-  return l(
-    l(l(c(0, 0, 0), c(1, 0, 0), u), l(c(0, 1, 0), c(1, 1, 0), u), v),
-    l(l(c(0, 0, 1), c(1, 0, 1), u), l(c(0, 1, 1), c(1, 1, 1), u), v), w,
-  )
-}
+const loadImage = (src) => new Promise((resolve, reject) => {
+  const img = new Image()
+  img.onload = () => resolve(img)
+  img.onerror = reject
+  img.src = src
+})
 
-// Soft drape: vertical folds in the lower body, diagonal pulls from the armpits, slight irregularity.
-function foldAt(m, x, y, z) {
-  const k = m.folds
-  const side = Math.abs(x)
-  let d = 0.0035 * k * smoothstep(0.05, -0.3, y) * Math.sin(x * 34 + Math.sin(y * 7) * 1.6 + (z < 0 ? 1.7 : 0))
-  d += 0.003 * k * Math.exp(-(((y - (m.shoulder - 0.17)) / 0.09) ** 2)) * smoothstep(0.1, 0.23, side) * Math.sin(side * 42 + y * 30)
-  d += 0.0028 * k * (vnoise(x * 9 + 3, y * 6, z * 9) - 0.5)
-  d += 0.005 * k * (vnoise(x * 3.5 + 11, y * 2.5, z * 3.5) - 0.5) * smoothstep(0.15, -0.2, y)
-  if (m.band) d -= 0.004 * smoothstep(m.hem + m.band + 0.05, m.hem + m.band, y) * (0.5 + 0.5 * Math.sin(x * 60))
-  return d
-}
+/* ---------- silhouette mask + inflated mesh ---------- */
 
-/* ---------- surface helpers ---------- */
-
-// A rows x cols grid of points; columns wrap when `wrap`. Normals point away from outward(r, c, p).
-function gridSurface(rows, cols, at, outward, wrap = true) {
-  const P = new Float32Array(rows * cols * 3)
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) P.set(at(r, c), (r * cols + c) * 3)
-  const N = new Float32Array(rows * cols * 3)
-  const a = new THREE.Vector3(), b = new THREE.Vector3(), n = new THREE.Vector3(), p = new THREE.Vector3()
-  const get = (v, r, c) => v.fromArray(P, (r * cols + c) * 3)
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const cp = wrap ? (c + 1) % cols : Math.min(cols - 1, c + 1)
-      const cm = wrap ? (c - 1 + cols) % cols : Math.max(0, c - 1)
-      const du = get(a, r, cp).sub(get(n, r, cm))
-      const dv = get(b, Math.min(rows - 1, r + 1), c).sub(get(n, Math.max(0, r - 1), c))
-      n.crossVectors(du, dv).normalize()
-      get(p, r, c)
-      if (n.dot(outward(r, c, p)) < 0) n.negate()
-      n.toArray(N, (r * cols + c) * 3)
-    }
-  }
-  return { P, N, rows, cols, wrap }
-}
-
-// Geometry from column ranges [c0, c1] of a grid (c1 may equal cols to close a wrapped seam).
-function gridGeometry(surf, ranges, uvAt) {
-  const { P, N, rows, cols } = surf
-  const pos = [], nrm = [], uv = [], idx = []
-  for (const [c0, c1] of ranges) {
-    const base = pos.length / 3
-    const w = c1 - c0 + 1
-    for (let r = 0; r < rows; r++) {
-      for (let c = c0; c <= c1; c++) {
-        const o = (r * cols + (c % cols)) * 3
-        pos.push(P[o], P[o + 1], P[o + 2])
-        nrm.push(N[o], N[o + 1], N[o + 2])
-        uv.push(...uvAt(P[o], P[o + 1], P[o + 2], r, c))
+// Each garment photo has a pre-cut alpha mask next to it (public/<name>-mask.png).
+function maskCanvases(alpha) {
+  const make = (mirror) => {
+    const c = document.createElement('canvas')
+    c.width = TEX_W; c.height = TEX_H
+    const ctx = c.getContext('2d')
+    const img = ctx.createImageData(TEX_W, TEX_H)
+    for (let y = 0; y < TEX_H; y++) {
+      for (let x = 0; x < TEX_W; x++) {
+        const o = (y * TEX_W + x) * 4
+        img.data[o] = img.data[o + 1] = img.data[o + 2] = 255
+        img.data[o + 3] = alpha[y * TEX_W + (mirror ? TEX_W - 1 - x : x)]
       }
     }
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < w - 1; c++) {
-        const a = base + r * w + c, b = a + 1, cc = a + w, d = cc + 1
-        idx.push(a, b, cc, b, d, cc)
+    ctx.putImageData(img, 0, 0)
+    return c
+  }
+  return { front: make(false), back: make(true) }
+}
+
+function buildGeometry(keep) {
+  const cols = GRID_W + 1, rows = GRID_H + 1, V = cols * rows
+  const inside = new Uint8Array(V)
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const px = Math.min(TEX_W - 1, Math.round((i / GRID_W) * (TEX_W - 1)))
+      const py = Math.min(TEX_H - 1, Math.round((j / GRID_H) * (TEX_H - 1)))
+      inside[j * cols + i] = keep[py * TEX_W + px]
+    }
+  }
+
+  // chamfer distance (in cells) from the silhouette edge
+  const dist = new Float32Array(V)
+  for (let k = 0; k < V; k++) dist[k] = inside[k] ? 1e9 : 0
+  const D = Math.SQRT2
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    const k = j * cols + i
+    if (!dist[k]) continue
+    if (i > 0) dist[k] = Math.min(dist[k], dist[k - 1] + 1)
+    if (j > 0) dist[k] = Math.min(dist[k], dist[k - cols] + 1)
+    if (i > 0 && j > 0) dist[k] = Math.min(dist[k], dist[k - cols - 1] + D)
+    if (i < cols - 1 && j > 0) dist[k] = Math.min(dist[k], dist[k - cols + 1] + D)
+    if (i === 0 || j === 0 || i === cols - 1 || j === rows - 1) dist[k] = Math.min(dist[k], 1)
+  }
+  for (let j = rows - 1; j >= 0; j--) for (let i = cols - 1; i >= 0; i--) {
+    const k = j * cols + i
+    if (!dist[k]) continue
+    if (i < cols - 1) dist[k] = Math.min(dist[k], dist[k + 1] + 1)
+    if (j < rows - 1) dist[k] = Math.min(dist[k], dist[k + cols] + 1)
+    if (i < cols - 1 && j < rows - 1) dist[k] = Math.min(dist[k], dist[k + cols + 1] + D)
+    if (i > 0 && j < rows - 1) dist[k] = Math.min(dist[k], dist[k + cols - 1] + D)
+  }
+
+  // rounded "inflated" profile, smoothed to remove ridges along the medial axis
+  const cell = PLANE_W / GRID_W
+  let depth = new Float32Array(V)
+  for (let k = 0; k < V; k++) {
+    const t = Math.min(1, Math.max(0, (dist[k] - 0.7) * cell / ROUND))
+    depth[k] = DEPTH * (1 - (1 - t) * (1 - t))
+  }
+  for (let pass = 0; pass < 5; pass++) {
+    const next = new Float32Array(V)
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+      const k = j * cols + i
+      if (!inside[k]) continue
+      let s = 0, n = 0
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const ii = i + dx, jj = j + dy
+        if (ii < 0 || jj < 0 || ii >= cols || jj >= rows) continue
+        s += depth[jj * cols + ii]; n++
       }
+      next[k] = s / n
+    }
+    depth = next
+  }
+
+  const pos = new Float32Array(V * 2 * 3)
+  const uv = new Float32Array(V * 2 * 2)
+  for (let s = 0; s < 2; s++) {
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+      const k = j * cols + i, o = s * V + k
+      pos[o * 3] = (i / GRID_W - 0.5) * PLANE_W
+      pos[o * 3 + 1] = (0.5 - j / GRID_H) * PLANE_H
+      pos[o * 3 + 2] = s ? -depth[k] : depth[k]
+      // the back shell's u is flipped so its texture reads correctly when seen from behind
+      uv[o * 2] = s ? 1 - i / GRID_W : i / GRID_W
+      uv[o * 2 + 1] = 1 - j / GRID_H
     }
   }
-  // make the winding agree with the outward normals
-  const i0 = idx[0] * 3, i1 = idx[1] * 3, i2 = idx[2] * 3
-  const e1 = new THREE.Vector3(pos[i1] - pos[i0], pos[i1 + 1] - pos[i0 + 1], pos[i1 + 2] - pos[i0 + 2])
-  const e2 = new THREE.Vector3(pos[i2] - pos[i0], pos[i2 + 1] - pos[i0 + 1], pos[i2 + 2] - pos[i0 + 2])
-  const face = e1.cross(e2)
-  if (face.dot(new THREE.Vector3(nrm[i0], nrm[i0 + 1], nrm[i0 + 2])) < 0) {
-    for (let i = 0; i < idx.length; i += 3) [idx[i + 1], idx[i + 2]] = [idx[i + 2], idx[i + 1]]
+
+  const front = [], back = []
+  for (let j = 0; j < GRID_H; j++) for (let i = 0; i < GRID_W; i++) {
+    const a = j * cols + i, b = a + 1, c = a + cols, d = c + 1
+    if (!(inside[a] || inside[b] || inside[c] || inside[d])) continue
+    front.push(a, c, b, b, c, d)
+    back.push(V + a, V + b, V + c, V + b, V + d, V + c)
   }
-  const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3))
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
-  g.setIndex(idx)
-  return g
+  let lowest = 0
+  for (let k = 0; k < V; k++) if (inside[k]) lowest = Math.max(lowest, Math.floor(k / cols))
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+  geo.setIndex([...front, ...back])
+  geo.addGroup(0, front.length, 0)
+  geo.addGroup(front.length, back.length, 1)
+  geo.computeVertexNormals()
+  geo.userData.hemY = 0.5 - lowest / GRID_H
+  return geo
 }
 
-const ringPoints = (surf, r) => {
-  const pts = []
-  for (let c = 0; c < surf.cols; c++) pts.push(new THREE.Vector3().fromArray(surf.P, (r * surf.cols + c) * 3))
-  return pts
-}
+/* ---------- surface detail: synthetic back, fabric bump, ink shading ---------- */
 
-/* ---------- garment parts ---------- */
+const lumAt = (d, o) => d[o] * 0.3 + d[o + 1] * 0.59 + d[o + 2] * 0.11
 
-const SEG = 128
-const TILE = 0.16 // world size of one repeat of the knit textures
-
-function buildBody(m) {
-  const rings = []
-  const NB = 72
-  for (let i = 0; i <= NB; i++) {
-    const t = i / NB
-    rings.push({ y: m.hem + (m.shoulder - m.hem) * t, w: table(m.width, t), df: table(m.depthFront, t), db: table(m.depthBack, t), a: 0, t })
-  }
-  // sloped shoulders: rounded at the shoulder point, then a straight ~20 degree run to the neckline
-  const top = rings[NB]
-  const NS = 24
-  for (let i = 1; i <= NS; i++) {
-    const k = i / NS
-    const keep = 1 - k
-    rings.push({
-      y: m.shoulder + m.neckRise * (0.3 * (1 - keep ** 4) + 0.7 * k),
-      w: m.neck.w + (top.w - m.neck.w) * keep,
-      df: m.neck.d + (top.df - m.neck.d) * Math.pow(keep, 0.7),
-      db: m.neck.d + (top.db - m.neck.d) * Math.pow(keep, 0.7),
-      a: k, t: 1,
-    })
-  }
-  const surf = gridSurface(rings.length, SEG, (r, c) => {
-    const R = rings[r]
-    const phi = (c / SEG) * Math.PI * 2
-    const cs = Math.cos(phi), sn = Math.sin(phi)
-    const depth = sn >= 0 ? R.df : R.db
-    // boxy knit body, round neckline
-    const E = 2 / (2.5 - 0.5 * smoothstep(0.3, 1, R.a))
-    const x = -R.w * spow(cs, E)
-    const z = depth * spow(sn, E)
-    const y = R.y - m.neck.frontDrop * smoothstep(0.45, 1, R.a) * Math.max(0, sn) ** 2
-    const d = foldAt(m, x, y, z) * (1 - smoothstep(0.35, 0.9, R.a))
-    const nx = x / R.w, nz = z / depth
-    const len = Math.hypot(nx, nz) || 1
-    return [x + (d * nx) / len, y, z + (d * nz) / len]
-  }, (r, c, p) => new THREE.Vector3(p.x, 0, p.z))
-  const geo = gridGeometry(surf, [[0, SEG / 2], [SEG / 2, SEG]], (x, y, z, r, c) => [
-    c <= SEG / 2 ? 0.25 + x / (4 * W_REF) : 0.75 - x / (4 * W_REF),
-    (y - Y_MIN) / (Y_MAX - Y_MIN),
-  ])
-  return { geo, surf, rings }
-}
-
-function buildSleeve(m) {
-  const s = m.sleeve
-  const Z = new THREE.Vector3(0, 0, 1)
-  // Axis of the sleeve. Straight sleeves run from `base` along `dir`. Drop-shoulder sleeves
-  // (`bend`) leave the shoulder sideways, curve over a wide arc and then hang down, so the
-  // shoulder line runs smoothly into the arm.
-  const axis = (sv) => {
-    if (!s.bend) {
-      const T = new THREE.Vector3(...s.dir).normalize()
-      return { c: new THREE.Vector3(...s.base).addScaledVector(T, sv), T }
+// Box blur of a Float32Array plane in place (horizontal then vertical), radius r.
+function boxBlur(src, w, h, r) {
+  const tmp = new Float32Array(src.length)
+  const n = 2 * r + 1
+  for (let y = 0; y < h; y++) {
+    const row = y * w
+    let acc = 0
+    for (let x = -r; x <= r; x++) acc += src[row + Math.min(w - 1, Math.max(0, x))]
+    for (let x = 0; x < w; x++) {
+      tmp[row + x] = acc / n
+      acc += src[row + Math.min(w - 1, x + r + 1)] - src[row + Math.max(0, x - r)]
     }
-    const { center: [cx, cy], radius: R, endAngle } = s.bend
-    const arcLen = R * (Math.PI / 2 - endAngle)
-    if (sv <= 0) return { c: new THREE.Vector3(cx + sv, cy + R, 0), T: new THREE.Vector3(1, 0, 0) }
-    if (sv <= arcLen) {
-      const a = Math.PI / 2 - sv / R
-      return { c: new THREE.Vector3(cx + R * Math.cos(a), cy + R * Math.sin(a), 0), T: new THREE.Vector3(Math.sin(a), -Math.cos(a), 0) }
+  }
+  for (let x = 0; x < w; x++) {
+    let acc = 0
+    for (let y = -r; y <= r; y++) acc += tmp[Math.min(h - 1, Math.max(0, y)) * w + x]
+    for (let y = 0; y < h; y++) {
+      src[y * w + x] = acc / n
+      acc += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x]
     }
-    const T = new THREE.Vector3(Math.sin(endAngle), -Math.cos(endAngle), 0)
-    const end = new THREE.Vector3(cx + R * Math.cos(endAngle), cy + R * Math.sin(endAngle), 0)
-    return { c: end.addScaledVector(T, sv - arcLen), T }
   }
-  const frame = (sv) => {
-    const { c, T } = axis(sv)
-    const N = Z.clone().cross(T).normalize()
-    return { c, T, N, B: new THREE.Vector3().crossVectors(T, N) }
+  return src
+}
+
+function fabricLevels(photo, alpha) {
+  const hist = new Uint32Array(256)
+  let n = 0
+  for (let i = 0; i < alpha.length; i++) {
+    if (alpha[i] > 127) { hist[Math.round(lumAt(photo.data, i * 4))]++; n++ }
   }
-  const center = (sv) => axis(sv).c
-  const s0 = -s.back, s1 = s.length
-  const ROWS = 40, COLS = 56
-  const radii = (sv) => {
-    const k = Math.max(0, sv) / s.length
-    return [s.ra[0] + (s.ra[1] - s.ra[0]) * k, s.rb[0] + (s.rb[1] - s.rb[0]) * k]
+  const pct = (p) => {
+    let acc = 0
+    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * p) return v }
+    return 255
   }
-  const svAt = (r) => s0 + ((s1 - s0) * r) / (ROWS - 1)
-  const surf = gridSurface(ROWS, COLS, (r, c) => {
-    const sv = svAt(r)
-    const th = (c / COLS) * Math.PI * 2
-    const [ra, rb] = radii(sv)
-    // creases around the elbow / underarm
-    const crease = 1 + 0.03 * m.folds * Math.sin(th * 3 + sv * 30) * smoothstep(0, 0.1, sv)
-      + 0.03 * m.folds * (vnoise(Math.cos(th) * 2 + 5, Math.sin(th) * 2, sv * 12) - 0.5)
-      + (s.bunch || 0) * Math.sin(sv * 70 + Math.cos(th) * 1.5) * smoothstep(s.length * 0.5, s.length * 0.95, sv)
-    // gather into the cuff
-    const taper = s.cuffScale ? 1 - (1 - s.cuffScale * 1.03) * smoothstep(s.length * 0.82, s.length, sv) : 1
-    const { c: ctr, N, B } = frame(sv)
-    const p = ctr.addScaledVector(N, ra * crease * taper * Math.cos(th)).addScaledVector(B, rb * crease * taper * Math.sin(th))
-    return [p.x, p.y, p.z]
-  }, (r, c, p) => p.clone().sub(center(svAt(r))))
-  const circ = Math.PI * (s.ra[0] + s.rb[0])
-  const geo = gridGeometry(surf, [[0, COLS]], (x, y, z, r, c) => [((c / COLS) * circ) / TILE, (svAt(r) - s0) / TILE])
-  // round cap where the sleeve meets the shoulder, so its start never shows as an open tube
-  let cap = null
-  if (!s.bend) {
-    const { N, T, B } = frame(s0)
-    cap = new THREE.SphereGeometry(1, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2)
-    cap.scale(s.ra[0] * 0.96, s.back * 0.5, s.rb[0] * 0.96)
-    cap.applyMatrix4(new THREE.Matrix4().makeBasis(N, T.clone().negate(), B).setPosition(center(s0)))
-  }
-  const end = ringPoints(surf, ROWS - 1)
-  let cuff = null
-  if (s.cuff) {
-    const [ra, rb] = radii(s.length)
-    const cuffSurf = gridSurface(8, COLS, (r, c) => {
-      const sv = s.length - 0.01 + ((s.cuff + 0.01) * r) / 7
-      const th = (c / COLS) * Math.PI * 2
-      const k = s.cuffScale || 0.9
-      const { c: ctr, N, B } = frame(sv)
-      const p = ctr.addScaledVector(N, ra * k * Math.cos(th)).addScaledVector(B, rb * k * Math.sin(th))
-      return [p.x, p.y, p.z]
-    }, () => new THREE.Vector3(), true)
-    // outward for the cuff: away from the sleeve axis
-    for (let r = 0; r < 8; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const o = (r * COLS + c) * 3
-        const p = new THREE.Vector3().fromArray(cuffSurf.P, o)
-        const n = new THREE.Vector3().fromArray(cuffSurf.N, o)
-        if (n.dot(p.sub(center(s.length))) < 0) n.negate().toArray(cuffSurf.N, o)
-      }
+  return { median: Math.max(1, pct(0.5)), high: Math.max(1, pct(0.85)) }
+}
+
+// The photos only show the front. Build a believable back from the same fabric:
+// a masked blur keeps the garment's colour and large-scale lighting but drops front-only
+// details (neck opening, drawstrings, pocket), then a fine grain restores the fabric texture.
+function synthBack(photo, alpha) {
+  const N = TEX_W * TEX_H
+  const { median } = fabricLevels(photo, alpha)
+  // two masked blurs: a light one keeps the folds but softens seams and drawstrings,
+  // a heavy one fills the big gaps (the neck hole) where the light one has no fabric to sample
+  const maskedBlur = (radius, passes) => {
+    const w = new Float32Array(N)
+    const ch = [new Float32Array(N), new Float32Array(N), new Float32Array(N)]
+    for (let i = 0; i < N; i++) {
+      const o = i * 4
+      // skip the dark inside-of-the-garment areas (neck hole, hood lining)
+      const keep = alpha[i] > 127 && lumAt(photo.data, o) > median * 0.62 ? 1 : 0
+      w[i] = keep
+      for (let c = 0; c < 3; c++) ch[c][i] = photo.data[o + c] * keep
     }
-    cuff = { geo: gridGeometry(cuffSurf, [[0, COLS]], (x, y, z, r, c) => [c / COLS, r / 7]), end: ringPoints(cuffSurf, 7) }
+    for (const plane of [w, ...ch]) for (let pass = 0; pass < passes; pass++) boxBlur(plane, TEX_W, TEX_H, radius)
+    return { w, ch }
   }
-  return { geo, cap, end, cuff }
+  // dark fleece hides its folds anyway, so smooth harder to lose the pocket and drawstrings
+  const fine = median > 100 ? maskedBlur(4, 2) : maskedBlur(9, 3)
+  const coarse = maskedBlur(22, 3)
+  const out = new ImageData(TEX_W, TEX_H)
+  let seed = 1234567
+  const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff
+  const grainAmount = median > 100 ? 7 : 6
+  for (let i = 0; i < N; i++) {
+    const o = i * 4
+    const grain = (rand() - 0.5) * grainAmount
+    const t = Math.min(1, fine.w[i] / 0.6)
+    for (let c = 0; c < 3; c++) {
+      const vf = fine.w[i] > 0.01 ? fine.ch[c][i] / fine.w[i] : 0
+      const vc = coarse.w[i] > 0.01 ? coarse.ch[c][i] / coarse.w[i] : photo.data[o + c]
+      out.data[o + c] = Math.max(0, Math.min(255, t * vf + (1 - t) * vc + grain))
+    }
+    out.data[o + 3] = 255
+  }
+  // skipping the darkest pixels lifts the average; match the front's typical brightness again
+  const k = median / fabricLevels(out, alpha).median
+  if (k < 0.98 || k > 1.02) {
+    for (let i = 0; i < N; i++) for (let c = 0; c < 3; c++) out.data[i * 4 + c] = Math.min(255, out.data[i * 4 + c] * k)
+  }
+  return out
 }
 
-// A hood worn "down but full", like a folded product shot: a soft dome around the neck whose
-// opening faces up and forwards and narrows into a V at the front, where the two edges meet.
-function buildHood(m) {
-  const h = m.hood
-  const center = new THREE.Vector3(...h.center)
-  const [rx, ry, rz] = h.radii
-  const A = new THREE.Vector3(...h.facing).normalize() // the way the opening faces
-  const U = new THREE.Vector3(1, 0, 0)
-  const V = new THREE.Vector3().crossVectors(A, U).normalize() // up-back; -V is down-front
-  const ROWS = 40, COLS = 96
-  // opening radius around A, stretched towards the front so the edges meet in a V at the neck
-  const openAt = (ph) => h.open + h.vee * Math.max(0, -Math.sin(ph)) ** 3
-  const point = (th, ph, sag = 0) => {
-    const d = A.clone().multiplyScalar(Math.cos(th))
-      .addScaledVector(U, Math.sin(th) * Math.cos(ph))
-      .addScaledVector(V, Math.sin(th) * Math.sin(ph))
-    // soft fabric: a little irregular bulge so it doesn't read as a shell
-    const bulge = 1 + sag * (vnoise(d.x * 3 + 7, d.y * 3, d.z * 3) - 0.5)
-    return new THREE.Vector3(center.x + d.x * rx * bulge, center.y + d.y * ry * bulge, center.z + d.z * rz * bulge)
-  }
-  const thAt = (r, ph) => openAt(ph) + ((h.bottom - openAt(ph)) * r) / (ROWS - 1)
-  const surf = gridSurface(ROWS, COLS, (r, c) => {
-    const ph = (c / COLS) * Math.PI * 2
-    const p = point(thAt(r, ph), ph, 0.12)
-    return [p.x, p.y, p.z]
-  }, (r, c, p) => p.clone().sub(center))
-  const geo = gridGeometry(surf, [[0, COLS]], (x, y, z, r, c) => [
-    ((c / COLS) * Math.PI * 2 * rx) / TILE, ((r / (ROWS - 1)) * Math.PI * ry) / TILE,
-  ])
-  // thick rolled edge around the opening
-  const rimPts = []
-  for (let c = 0; c < COLS; c++) {
-    const ph = (c / COLS) * Math.PI * 2
-    rimPts.push(point(openAt(ph) + 0.03, ph, 0.12))
-  }
-  const rimGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rimPts, true), 220, h.rim, 12, true)
-  // where the drawstrings come out: either side of the V
-  const eyelet = (side) => {
-    const ph = -Math.PI / 2 + side * 0.32
-    return point(openAt(ph) + 0.06, ph, 0.12)
-  }
-  return { geo, rimGeo, eyelet }
-}
-
-function buildStrings(m, hood) {
-  const geos = []
-  const frontZ = (y) => table(m.depthFront, (y - m.hem) / (m.shoulder - m.hem)) + 0.012
-  for (const side of [-1, 1]) {
-    const start = hood.eyelet(side)
-    const x = side * m.strings.spread
-    const pts = [
-      start,
-      new THREE.Vector3((start.x + x) / 2, start.y - 0.04, Math.max(start.z, frontZ(start.y - 0.04)) + 0.004),
-      new THREE.Vector3(x, (start.y + m.strings.end) / 2, frontZ((start.y + m.strings.end) / 2)),
-      new THREE.Vector3(x + side * 0.004, m.strings.end, frontZ(m.strings.end)),
-    ]
-    geos.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 60, 0.0045, 8, false))
-    const tip = new THREE.CylinderGeometry(0.0058, 0.0058, 0.03, 12)
-    tip.translate(pts[3].x, pts[3].y - 0.014, pts[3].z)
-    geos.push(tip)
-  }
-  return geos
-}
-
-/* ---------- textures ---------- */
-
-function noiseCanvas(w, h, amount, seed = 7) {
+// High-pass of the fabric for the bump map, so folds and weave catch the lights.
+function bumpCanvas(photo, alpha, mirror) {
+  const N = TEX_W * TEX_H
+  const lum = new Float32Array(N)
+  for (let i = 0; i < N; i++) lum[i] = lumAt(photo.data, i * 4)
+  const low = boxBlur(boxBlur(Float32Array.from(lum), TEX_W, TEX_H, 6), TEX_W, TEX_H, 6)
   const c = document.createElement('canvas')
-  c.width = w; c.height = h
-  const ctx = c.getContext('2d')
-  const img = ctx.createImageData(w, h)
-  let s = seed
-  for (let i = 0; i < w * h; i++) {
-    s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff
-    const v = 128 + (s / 0x7fffffff - 0.5) * amount
-    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v
-    img.data[i * 4 + 3] = 255
+  c.width = TEX_W; c.height = TEX_H
+  const out = new ImageData(TEX_W, TEX_H)
+  for (let y = 0; y < TEX_H; y++) {
+    for (let x = 0; x < TEX_W; x++) {
+      const src = y * TEX_W + (mirror ? TEX_W - 1 - x : x)
+      const o = (y * TEX_W + x) * 4
+      const v = alpha[src] > 127 ? Math.max(0, Math.min(255, 128 + (lum[src] - low[src]) * 1.6)) : 128
+      out.data[o] = out.data[o + 1] = out.data[o + 2] = v
+      out.data[o + 3] = 255
+    }
   }
-  ctx.putImageData(img, 0, 0)
+  c.getContext('2d').putImageData(out, 0, 0)
   return c
 }
 
-function ribCanvas() {
-  const c = noiseCanvas(64, 64, 20, 3)
-  const ctx = c.getContext('2d')
-  for (let x = 0; x < 64; x += 8) {
-    ctx.fillStyle = 'rgba(0,0,0,0.35)'
-    ctx.fillRect(x, 0, 3, 64)
-    ctx.fillStyle = 'rgba(255,255,255,0.25)'
-    ctx.fillRect(x + 4, 0, 3, 64)
+// How lit the fabric is at each point (1 = fully lit). Multiplied over the printed design
+// so ink sits in the folds and shadows instead of floating on top like a sticker.
+function shadingCanvas(photo, alpha, mirror) {
+  const N = TEX_W * TEX_H
+  const { high } = fabricLevels(photo, alpha)
+  const lum = new Float32Array(N)
+  for (let i = 0; i < N; i++) lum[i] = lumAt(photo.data, i * 4)
+  boxBlur(lum, TEX_W, TEX_H, 2)
+  const c = document.createElement('canvas')
+  c.width = TEX_W; c.height = TEX_H
+  const out = new ImageData(TEX_W, TEX_H)
+  for (let y = 0; y < TEX_H; y++) {
+    for (let x = 0; x < TEX_W; x++) {
+      const src = y * TEX_W + (mirror ? TEX_W - 1 - x : x)
+      const o = (y * TEX_W + x) * 4
+      const s = Math.max(0.45, Math.min(1, lum[src] / high))
+      out.data[o] = out.data[o + 1] = out.data[o + 2] = s * 255
+      out.data[o + 3] = 255
+    }
   }
+  c.getContext('2d').putImageData(out, 0, 0)
   return c
 }
 
-const texX = (x, side) => (side === 'back' ? 0.75 - x / (4 * W_REF) : 0.25 + x / (4 * W_REF)) * TEX_W
-const texY = (y) => (Y_MAX - y) * PX
-
-function printRectPx(m, side) {
-  const { x0, x1, y0, y1 } = m.print
-  const pw = (x1 - x0) * PX
-  return { left: texX((x0 + x1) / 2, side) - pw / 2, top: texY(y1), pw, ph: (y1 - y0) * PX }
+const shapes = new Map()
+function loadShape(src) {
+  if (!shapes.has(src)) {
+    const maskSrc = src.replace(/\.\w+$/, '-mask.png')
+    shapes.set(src, Promise.all([loadImage(src), loadImage(maskSrc)]).then(([img, maskImg]) => {
+      const c = document.createElement('canvas')
+      c.width = TEX_W; c.height = TEX_H
+      const ctx = c.getContext('2d', { willReadFrequently: true })
+      // draw like "object-fit: cover" into the texture-sized canvas
+      const cover = (im) => {
+        const s = Math.max(TEX_W / im.width, TEX_H / im.height)
+        ctx.clearRect(0, 0, TEX_W, TEX_H)
+        ctx.drawImage(im, (TEX_W - im.width * s) / 2, (TEX_H - im.height * s) / 2, im.width * s, im.height * s)
+        return ctx.getImageData(0, 0, TEX_W, TEX_H)
+      }
+      const photo = cover(img)
+      const maskData = cover(maskImg).data
+      const alpha = new Uint8Array(TEX_W * TEX_H)
+      const keep = new Uint8Array(TEX_W * TEX_H)
+      for (let i = 0; i < alpha.length; i++) {
+        alpha[i] = maskData[i * 4]
+        keep[i] = alpha[i] > 127 ? 1 : 0
+      }
+      const backPhoto = synthBack(photo, alpha)
+      return {
+        photo, backPhoto, masks: maskCanvases(alpha),
+        bumps: { front: bumpCanvas(photo, alpha, false), back: bumpCanvas(backPhoto, alpha, true) },
+        shading: { front: shadingCanvas(photo, alpha, false), back: shadingCanvas(backPhoto, alpha, true) },
+        geometry: buildGeometry(keep), tinted: new Map(),
+      }
+    }))
+  }
+  return shapes.get(src)
 }
 
-function pocketPath(ctx, m) {
-  const p = m.pocket
-  const top = texY(p.top), bottom = texY(p.bottom)
-  const l = (x) => texX(x, 'front')
-  ctx.beginPath()
-  ctx.moveTo(l(-p.topHalf), top)
-  ctx.lineTo(l(p.topHalf), top)
-  ctx.quadraticCurveTo(l(p.topHalf + 0.012), top + (bottom - top) * 0.55, l(p.bottomHalf), bottom - 4)
-  ctx.lineTo(l(-p.bottomHalf), bottom - 4)
-  ctx.quadraticCurveTo(l(-p.topHalf - 0.012), top + (bottom - top) * 0.55, l(-p.topHalf), top)
-  ctx.closePath()
-}
+/* ---------- texture composition ---------- */
 
-// Knit grain, hem stitching, ribbing and the hoodie pocket seams for the body.
-function bodyBumpCanvas(m) {
-  const c = noiseCanvas(TEX_W, TEX_H, 30)
-  const ctx = c.getContext('2d')
-  const stitches = (y) => {
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)'
-    ctx.lineWidth = 3
-    ctx.setLineDash([10, 7])
-    ctx.beginPath(); ctx.moveTo(0, texY(y)); ctx.lineTo(TEX_W, texY(y)); ctx.stroke()
-    ctx.setLineDash([])
+function tintedPhoto(shape, color, side) {
+  const key = `${side}|${color.bright || 1}|${color.tint}`
+  if (!shape.tinted.has(key)) {
+    // brighten (for the dark hoodie) then multiply by the tint, like the old CSS filter + multiply
+    const b = color.bright || 1
+    const src = (side === 'back' ? shape.backPhoto : shape.photo).data
+    const out = new ImageData(TEX_W, TEX_H)
+    const tr = (parseInt(color.tint.slice(1, 3), 16) / 255) * b
+    const tg = (parseInt(color.tint.slice(3, 5), 16) / 255) * b
+    const tb = (parseInt(color.tint.slice(5, 7), 16) / 255) * b
+    for (let i = 0; i < src.length; i += 4) {
+      out.data[i] = Math.min(255, src[i] * tr)
+      out.data[i + 1] = Math.min(255, src[i + 1] * tg)
+      out.data[i + 2] = Math.min(255, src[i + 2] * tb)
+      out.data[i + 3] = 255
+    }
+    const c = document.createElement('canvas')
+    c.width = TEX_W; c.height = TEX_H
+    c.getContext('2d').putImageData(out, 0, 0)
+    shape.tinted.set(key, c)
   }
-  if (m.band) {
-    ctx.fillStyle = 'rgba(0,0,0,0.4)'
-    for (let x = 0; x < TEX_W; x += 10) ctx.fillRect(x, texY(m.hem + m.band), 4, m.band * PX)
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'
-    ctx.fillRect(0, texY(m.hem + m.band) - 2, TEX_W, 4)
-  } else {
-    stitches(m.hem + 0.016)
-    stitches(m.hem + 0.022)
-  }
-  if (m.pocket) {
-    ctx.strokeStyle = 'rgba(0,0,0,0.9)'
-    ctx.lineWidth = 9
-    pocketPath(ctx, m); ctx.stroke()
-    ctx.strokeStyle = 'rgba(0,0,0,0.45)'
-    ctx.lineWidth = 2.5
-    ctx.setLineDash([9, 7])
-    ctx.save(); ctx.translate(0, 10); ctx.scale(1, 0.985); pocketPath(ctx, m); ctx.stroke(); ctx.restore()
-    ctx.setLineDash([])
-  }
-  return c
+  return shape.tinted.get(key)
 }
 
 const layerImages = new Map()
@@ -452,14 +346,16 @@ function layerImage(src, onReady) {
   return entry.ready ? entry.img : null
 }
 
-// Sizes match the HTML overlay: text 16%, clipart 45%, images 70% of the print-area width.
-function drawLayers(ctx, layers, rect, onAsset) {
+function drawLayers(ctx, layers, print, onAsset) {
+  const pct = (v) => parseFloat(v) / 100
+  const px = pct(print.left) * TEX_W, py = pct(print.top) * TEX_H
+  const pw = pct(print.width) * TEX_W, ph = pct(print.height) * TEX_H
   for (const l of layers) {
     ctx.save()
-    ctx.translate(rect.left + (l.x / 100) * rect.pw, rect.top + (l.y / 100) * rect.ph)
+    ctx.translate(px + (l.x / 100) * pw, py + (l.y / 100) * ph)
     ctx.rotate(rad(l.rotate))
     if (l.type === 'text') {
-      const font = `${l.font.weight} ${0.16 * rect.pw * l.scale}px ${l.font.family}`
+      const font = `${l.font.weight} ${0.16 * pw * l.scale}px ${l.font.family}`
       if (!document.fonts.check(font)) document.fonts.load(font).then(onAsset)
       ctx.font = font
       ctx.fillStyle = l.color
@@ -467,7 +363,7 @@ function drawLayers(ctx, layers, rect, onAsset) {
       ctx.textBaseline = 'middle'
       ctx.fillText(l.text.toUpperCase(), 0, 0)
     } else if (l.type === 'clip') {
-      const s = 0.45 * rect.pw * l.scale
+      const s = 0.45 * pw * l.scale
       ctx.translate(-s / 2, -s / 2)
       ctx.scale(s / 24, s / 24)
       ctx.fillStyle = l.color
@@ -475,7 +371,7 @@ function drawLayers(ctx, layers, rect, onAsset) {
     } else {
       const img = layerImage(l.src, onAsset)
       if (img) {
-        const w = 0.7 * rect.pw * l.scale
+        const w = 0.7 * pw * l.scale
         const h = w * (img.naturalHeight / img.naturalWidth || 1)
         ctx.drawImage(img, -w / 2, -h / 2, w, h)
       }
@@ -484,65 +380,46 @@ function drawLayers(ctx, layers, rect, onAsset) {
   }
 }
 
-// Very dark swatches read as a black hole in 3D; lift them to a real black-fabric value.
-function fabricColor(color) {
-  const c = new THREE.Color(color.swatch)
-  const hsl = {}
-  c.getHSL(hsl)
-  if (hsl.l < 0.12) c.lerp(new THREE.Color('#38383c'), 0.6)
-  return c
+const scratchCanvases = []
+const scratch = (i) => {
+  if (!scratchCanvases[i]) {
+    scratchCanvases[i] = document.createElement('canvas')
+    scratchCanvases[i].width = TEX_W
+    scratchCanvases[i].height = TEX_H
+  }
+  return scratchCanvases[i]
 }
 
-function composeBody(canvas, m, fabric, layers, onAsset) {
+function compose(canvas, shape, color, layers, print, side, onAsset) {
   const ctx = canvas.getContext('2d')
-  ctx.fillStyle = `#${fabric.getHexString(THREE.SRGBColorSpace)}`
-  ctx.fillRect(0, 0, TEX_W, TEX_H)
-  if (m.pocket) {
-    // the pocket panel catches a little less light, and its side openings fall into shadow
-    const p = m.pocket
-    ctx.fillStyle = 'rgba(0,0,0,0.03)'
-    pocketPath(ctx, m); ctx.fill()
-    ctx.strokeStyle = 'rgba(255,255,255,0.07)'
-    ctx.lineWidth = 6
-    pocketPath(ctx, m); ctx.stroke()
-    ctx.save()
-    pocketPath(ctx, m); ctx.clip()
-    for (const s of [-1, 1]) {
-      const edge = texX(s * p.topHalf, 'front'), inner = texX(s * (p.topHalf - 0.035), 'front')
-      const g = ctx.createLinearGradient(edge, 0, inner, 0)
-      g.addColorStop(0, 'rgba(0,0,0,0.14)')
-      g.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.fillStyle = g
-      ctx.fillRect(Math.min(edge, inner) - 40, texY(p.top), Math.abs(edge - inner) + 80, (p.top - p.bottom) * PX)
-    }
-    ctx.restore()
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.clearRect(0, 0, TEX_W, TEX_H)
+  const photo = tintedPhoto(shape, color, side)
+  if (side === 'back') {
+    ctx.save(); ctx.translate(TEX_W, 0); ctx.scale(-1, 1); ctx.drawImage(photo, 0, 0); ctx.restore()
+  } else {
+    ctx.drawImage(photo, 0, 0)
   }
-  for (const side of ['front', 'back']) {
-    const sideLayers = layers.filter((l) => l.side === side)
-    if (sideLayers.length) drawLayers(ctx, sideLayers, printRectPx(m, side), onAsset)
+  const sideLayers = layers.filter((l) => l.side === side)
+  if (sideLayers.length) {
+    // print the design on its own sheet, darken it where the fabric is in shadow, then lay it down
+    const ink = scratch(0), shaded = scratch(1)
+    const ictx = ink.getContext('2d'), sctx = shaded.getContext('2d')
+    ictx.clearRect(0, 0, TEX_W, TEX_H)
+    drawLayers(ictx, sideLayers, print, onAsset)
+    sctx.globalCompositeOperation = 'source-over'
+    sctx.clearRect(0, 0, TEX_W, TEX_H)
+    sctx.drawImage(ink, 0, 0)
+    sctx.globalCompositeOperation = 'multiply'
+    sctx.drawImage(shape.shading[side], 0, 0)
+    sctx.globalCompositeOperation = 'destination-in'
+    sctx.drawImage(ink, 0, 0)
+    sctx.globalCompositeOperation = 'source-over'
+    ctx.drawImage(shaded, 0, 0)
   }
-}
-
-/* ---------- assembled model ---------- */
-
-const modelCache = new Map()
-function getModel(key) {
-  if (modelCache.has(key)) return modelCache.get(key)
-  const m = MODELS[key]
-  const body = buildBody(m)
-  const sleeve = buildSleeve(m)
-  const parts = { m, body, sleeve, bump: bodyBumpCanvas(m) }
-  const neck = ringPoints(body.surf, body.surf.rows - 1).map((p) => new THREE.Vector3(p.x * 1.02, p.y + 0.002, p.z * 1.02))
-  if (m.collar) parts.collar = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(neck, true), 160, m.collar, 10, true)
-  parts.hem = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ringPoints(body.surf, 0), true), 160, 0.003, 6, true)
-  const sleeveEnd = sleeve.cuff ? sleeve.cuff.end : sleeve.end
-  parts.sleeveHem = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(sleeveEnd, true), 64, 0.0045, 6, true)
-  if (m.hood) {
-    parts.hood = buildHood(m)
-    parts.strings = buildStrings(m, parts.hood)
-  }
-  modelCache.set(key, parts)
-  return parts
+  ctx.globalCompositeOperation = 'destination-in'
+  ctx.drawImage(shape.masks[side], 0, 0)
+  ctx.globalCompositeOperation = 'source-over'
 }
 
 /* ---------- component ---------- */
@@ -555,88 +432,100 @@ export default function Garment3D({
   const three = useRef(null)
   const live = useRef({})
   live.current = { angle, immediate, autoRotate, showcase, onSettle }
+  const [shape, setShape] = useState(null)
   const [assetTick, setAssetTick] = useState(0)
-  const modelKey = product.model
 
-  // one-time renderer, lights and shared materials
+  useEffect(() => {
+    let on = true
+    loadShape(product.img).then((s) => on && setShape(s))
+    return () => { on = false }
+  }, [product.img])
+
+  // the print area sits on the bulged chest, slightly nearer the camera than the photo plane
+  useEffect(() => {
+    if (!onPrintRect) return
+    const scale = (v, size) => 50 + (parseFloat(v) + parseFloat(size) / 2 - 50) * OVERLAY_SCALE - (parseFloat(size) * OVERLAY_SCALE) / 2
+    const p = product.print
+    onPrintRect({
+      left: `${scale(p.left, p.width)}%`, top: `${scale(p.top, p.height)}%`,
+      width: `${parseFloat(p.width) * OVERLAY_SCALE}%`, height: `${parseFloat(p.height) * OVERLAY_SCALE}%`,
+    })
+  }, [product.print])
+
+  // one-time three.js setup
   useEffect(() => {
     const host = hostRef.current
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
     renderer.outputColorSpace = THREE.SRGBColorSpace
-    renderer.toneMapping = THREE.NeutralToneMapping
-    renderer.toneMappingExposure = 0.92
-    renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.toneMapping = THREE.NoToneMapping
     host.appendChild(renderer.domElement)
 
     const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(FOV, STAGE_ASPECT, 0.05, 20)
+    const camera = new THREE.PerspectiveCamera(FOV, TEX_W / TEX_H, 0.1, 20)
+    if (showcase) {
+      // look slightly down onto the garment so the floor shadow reads
+      camera.position.set(0, 0.24, CAM_DIST * 1.1)
+      camera.lookAt(0, -0.035, 0)
+    } else {
+      // straight on, so the HTML print-area overlay lines up with the texture
+      camera.position.set(0, 0, CAM_DIST)
+    }
+
+    // three.js lights are physical: ~PI total irradiance reproduces the photo's own brightness head-on
+    // soft studio-room reflections so light wraps around the fabric; flat ambient fills the rest
     const pmrem = new THREE.PMREMGenerator(renderer)
     const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
     scene.environment = envMap
-    scene.environmentIntensity = 0.55
-
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3a3a, 0.7))
-    const key = new THREE.DirectionalLight(0xffffff, 2.2)
-    key.position.set(2.4, 2.1, 2.2)
-    key.castShadow = true
-    key.shadow.mapSize.set(2048, 2048)
-    Object.assign(key.shadow.camera, { left: -0.7, right: 0.7, top: 0.7, bottom: -0.7, near: 0.5, far: 8 })
-    key.shadow.bias = -0.0004
-    key.shadow.normalBias = 0.02
-    const fill = new THREE.DirectionalLight(0xdfe6ff, 0.5)
-    fill.position.set(-2.4, 0.6, 1.8)
-    const rim = new THREE.DirectionalLight(0xffffff, 1.3)
-    rim.position.set(-0.8, 1.6, -3)
+    scene.environmentIntensity = 0.3
+    scene.add(new THREE.AmbientLight(0xffffff, 0.85))
+    const key = new THREE.DirectionalLight(0xffffff, 1.6)
+    key.position.set(1.4, 1.6, 3)
+    const fill = new THREE.DirectionalLight(0xdfe6ff, 0.55)
+    fill.position.set(-2.2, 0.4, 1.4)
+    const rim = new THREE.DirectionalLight(0xffffff, 1.0)
+    rim.position.set(-0.6, 1.2, -3)
     scene.add(key, fill, rim)
 
-    const bodyCanvas = document.createElement('canvas')
-    bodyCanvas.width = TEX_W; bodyCanvas.height = TEX_H
-    const bodyMap = new THREE.CanvasTexture(bodyCanvas)
-    bodyMap.colorSpace = THREE.SRGBColorSpace
-    bodyMap.anisotropy = renderer.capabilities.getMaxAnisotropy()
-    const bodyBump = new THREE.CanvasTexture(document.createElement('canvas'))
-    const knit = new THREE.CanvasTexture(noiseCanvas(256, 256, 30, 11))
-    knit.wrapS = knit.wrapT = THREE.RepeatWrapping
-    const rib = new THREE.CanvasTexture(ribCanvas())
-    rib.wrapS = rib.wrapT = THREE.RepeatWrapping
-    const collarRib = rib.clone()
-
-    const cloth = (extra) => new THREE.MeshPhysicalMaterial({
-      roughness: 0.92, metalness: 0, specularIntensity: 0.22,
-      sheen: 1, sheenRoughness: 0.55, ...extra,
+    const textures = ['front', 'back'].map(() => {
+      const c = document.createElement('canvas')
+      c.width = TEX_W; c.height = TEX_H
+      const t = new THREE.CanvasTexture(c)
+      t.colorSpace = THREE.SRGBColorSpace
+      t.anisotropy = renderer.capabilities.getMaxAnisotropy()
+      return t
     })
-    const materials = {
-      body: cloth({ map: bodyMap, bumpMap: bodyBump, bumpScale: 0.9 }),
-      fabric: cloth({ bumpMap: knit, bumpScale: 0.9 }),
-      rib: cloth({ bumpMap: rib, bumpScale: 1.6 }),
-      collar: cloth({ bumpMap: collarRib, bumpScale: 1.6 }),
-      inner: new THREE.MeshStandardMaterial({ side: THREE.BackSide, roughness: 1 }),
-      metal: new THREE.MeshStandardMaterial({ color: 0x9a9a9e, metalness: 0.7, roughness: 0.35 }),
-    }
-
+    const bumpMaps = ['front', 'back'].map(() => new THREE.CanvasTexture(document.createElement('canvas')))
+    const materials = textures.map((map, i) => new THREE.MeshPhysicalMaterial({
+      map, bumpMap: bumpMaps[i], bumpScale: 1.4,
+      side: THREE.DoubleSide, alphaTest: 0.5, alphaToCoverage: true, roughness: 0.92, metalness: 0,
+      specularIntensity: 0.25, // cotton barely reflects; keeps dark colours rich
+      // soft cloth sheen at grazing angles
+      sheen: 1, sheenRoughness: 0.6, sheenColor: new THREE.Color(0.09, 0.09, 0.1),
+    }))
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), materials)
     const pivot = new THREE.Group()
-    scene.add(pivot)
+    pivot.add(mesh)
 
-    // contact shadow under the hem (showcase only)
+    // contact shadow on the floor, turning with the garment
     const shadowCanvas = document.createElement('canvas')
     shadowCanvas.width = shadowCanvas.height = 256
     const sctx = shadowCanvas.getContext('2d')
     const grad = sctx.createRadialGradient(128, 128, 0, 128, 128, 128)
-    grad.addColorStop(0, 'rgba(0,0,0,0.7)')
-    grad.addColorStop(0.5, 'rgba(0,0,0,0.3)')
+    grad.addColorStop(0, 'rgba(0,0,0,0.75)')
+    grad.addColorStop(0.45, 'rgba(0,0,0,0.4)')
     grad.addColorStop(1, 'rgba(0,0,0,0)')
     sctx.fillStyle = grad
     sctx.fillRect(0, 0, 256, 256)
     const shadowTex = new THREE.CanvasTexture(shadowCanvas)
-    const floorShadow = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.75, 0.4),
+    const shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(PLANE_W * 1.05, DEPTH * 5),
       new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false }),
     )
-    floorShadow.rotation.x = -Math.PI / 2
-    floorShadow.visible = live.current.showcase
-    pivot.add(floorShadow)
+    shadow.rotation.x = -Math.PI / 2
+    shadow.visible = showcase
+    pivot.add(shadow)
+    scene.add(pivot)
 
     const resize = () => {
       const w = host.clientWidth, h = host.clientHeight
@@ -648,8 +537,8 @@ export default function Garment3D({
     ro.observe(host)
 
     const st = {
-      renderer, scene, camera, pivot, materials, bodyMap, bodyBump, collarRib, floorShadow,
-      garment: null, dirty: true, current: live.current.angle, spin: 0, sway: 0, settled: true,
+      renderer, scene, camera, pivot, mesh, shadow, textures, bumpMaps,
+      dirty: true, current: live.current.angle, spin: 0, sway: 0, settled: true,
     }
     three.current = st
     resize()
@@ -662,10 +551,11 @@ export default function Garment3D({
       if (imm) st.current = target
       else st.current += (target - st.current) * (1 - Math.exp(-dt * 9))
       if (auto) st.spin += dt * 22
+      // a slow, gentle sway while idle; eases out while the user drags
       st.sway += dt
       const swayAmount = show && !imm ? Math.sin(st.sway * 0.8) * 4 : 0
       const moving = Math.abs(target - st.current) > 0.05
-      if (st.garment && (moving || auto || show || st.dirty)) {
+      if (moving || auto || show || st.dirty) {
         pivot.rotation.y = rad(st.current + st.spin + swayAmount)
         renderer.render(scene, camera)
         st.dirty = false
@@ -679,10 +569,13 @@ export default function Garment3D({
     return () => {
       cancelAnimationFrame(raf)
       ro.disconnect()
-      ;[bodyMap, bodyBump, knit, rib, collarRib, shadowTex, envMap].forEach((t) => t.dispose())
-      Object.values(materials).forEach((mat) => mat.dispose())
-      floorShadow.geometry.dispose()
-      floorShadow.material.dispose()
+      textures.forEach((t) => t.dispose())
+      bumpMaps.forEach((t) => t.dispose())
+      materials.forEach((m) => m.dispose())
+      shadowTex.dispose()
+      shadow.geometry.dispose()
+      shadow.material.dispose()
+      envMap.dispose()
       pmrem.dispose()
       renderer.dispose()
       renderer.domElement.remove()
@@ -690,97 +583,34 @@ export default function Garment3D({
     }
   }, [])
 
-  // (re)build the garment meshes when the product changes
   useEffect(() => {
     const st = three.current
-    if (!st) return
-    const parts = getModel(modelKey)
-    const { m } = parts
-    const { materials: mat, pivot, camera } = st
-    if (st.garment) pivot.remove(st.garment)
-    const g = new THREE.Group()
-    const add = (geo, material, opts = {}) => {
-      const mesh = new THREE.Mesh(geo, material)
-      mesh.castShadow = opts.cast !== false
-      mesh.receiveShadow = true
-      if (opts.mirror) mesh.scale.x = -1
-      g.add(mesh)
-    }
-    add(parts.body.geo, mat.body)
-    add(parts.body.geo, mat.inner, { cast: false })
-    for (const mirror of [false, true]) {
-      add(parts.sleeve.geo, mat.fabric, { mirror })
-      add(parts.sleeve.geo, mat.inner, { mirror, cast: false })
-      if (parts.sleeve.cap) add(parts.sleeve.cap, mat.fabric, { mirror })
-      add(parts.sleeveHem, parts.sleeve.cuff ? mat.rib : mat.fabric, { mirror })
-      if (parts.sleeve.cuff) add(parts.sleeve.cuff.geo, mat.rib, { mirror })
-    }
-    add(parts.hem, mat.fabric)
-    if (parts.collar) add(parts.collar, mat.collar)
-    if (parts.hood) {
-      add(parts.hood.geo, mat.fabric)
-      add(parts.hood.geo, mat.inner, { cast: false })
-      add(parts.hood.rimGeo, mat.fabric)
-      parts.strings.forEach((geo, i) => add(geo, i % 2 ? mat.metal : mat.fabric))
-    }
-    pivot.add(g)
-    st.garment = g
-
-    st.bodyBump.image = parts.bump
-    st.bodyBump.needsUpdate = true
-    // about one rib every 4 mm
-    mat.rib.bumpMap.repeat.set((Math.PI * (m.sleeve.ra[1] + m.sleeve.rb[1])) / (8 * 0.004), 1)
-    st.collarRib.repeat.set((Math.PI * (m.neck.w + m.neck.d)) / (8 * 0.004), 1)
-
-    // frame the garment for the 410:480 stage
-    const box = new THREE.Box3().setFromObject(g)
-    const size = box.getSize(new THREE.Vector3())
-    const cy = (box.min.y + box.max.y) / 2
-    const tan = Math.tan(rad(FOV / 2))
-    const dist = Math.max(size.y / 2 / tan, size.x / 2 / (tan * STAGE_ASPECT)) * 1.1 + size.z / 2
-    if (live.current.showcase) {
-      camera.position.set(0, cy + dist * 0.12, dist * 1.04)
-      camera.lookAt(0, cy - 0.015, 0)
-    } else {
-      camera.position.set(0, cy, dist)
-      camera.lookAt(0, cy, 0)
-    }
-    camera.updateMatrixWorld()
-    st.floorShadow.position.y = box.min.y + 0.002
-
-    // where the print area lands on screen when facing front, for the HTML editing overlay
-    if (onPrintRect) {
-      const p = m.print
-      const z = table(m.depthFront, ((p.y0 + p.y1) / 2 - m.hem) / (m.shoulder - m.hem)) + 0.004
-      const a = new THREE.Vector3(p.x0, p.y1, z).project(camera)
-      const b = new THREE.Vector3(p.x1, p.y0, z).project(camera)
-      const pct = (v) => `${(v * 100).toFixed(2)}%`
-      onPrintRect({ left: pct((a.x + 1) / 2), top: pct((1 - a.y) / 2), width: pct((b.x - a.x) / 2), height: pct((a.y - b.y) / 2) })
-    }
+    if (!st || !shape) return
+    st.mesh.geometry = shape.geometry
+    st.shadow.position.y = shape.geometry.userData.hemY - 0.004
+    ;['front', 'back'].forEach((side, i) => {
+      st.bumpMaps[i].image = shape.bumps[side]
+      st.bumpMaps[i].needsUpdate = true
+    })
     st.dirty = true
-  }, [modelKey])
+  }, [shape])
 
-  // colour + printed design
+  // repaint the printed textures whenever the colour or design changes
   useEffect(() => {
     const st = three.current
-    if (!st) return
-    const { m } = getModel(modelKey)
-    const fabric = fabricColor(color)
-    const sheen = fabric.clone().lerp(new THREE.Color(1, 1, 1), 0.5).multiplyScalar(0.3)
-    for (const k of ['body', 'fabric', 'rib', 'collar']) st.materials[k].sheenColor.copy(sheen)
-    st.materials.fabric.color.copy(fabric)
-    st.materials.rib.color.copy(fabric).multiplyScalar(0.92)
-    st.materials.collar.color.copy(fabric).multiplyScalar(0.92)
-    st.materials.inner.color.copy(fabric).multiplyScalar(0.22)
-    composeBody(st.bodyMap.image, m, fabric, layers, () => setAssetTick((t) => t + 1))
-    st.bodyMap.needsUpdate = true
+    if (!st || !shape) return
+    const bump = () => setAssetTick((t) => t + 1)
+    ;['front', 'back'].forEach((side, i) => {
+      compose(st.textures[i].image, shape, color, layers, product.print, side, bump)
+      st.textures[i].needsUpdate = true
+    })
     st.dirty = true
-  }, [modelKey, color, layers, assetTick])
+  }, [shape, color, layers, product.print, assetTick])
 
-  // static snapshots for the view thumbnails and order previews
+  // static snapshots for the view thumbnails
   useEffect(() => {
     const st = three.current
-    if (!st || !onThumbs || !thumbAngles) return
+    if (!st || !shape || !onThumbs || !thumbAngles) return
     const id = setTimeout(() => {
       const { renderer, scene, camera, pivot } = st
       const thumb = document.createElement('canvas')
@@ -797,7 +627,7 @@ export default function Garment3D({
       onThumbs(urls)
     }, 180)
     return () => clearTimeout(id)
-  }, [modelKey, color, layers, assetTick, thumbAngles?.join()])
+  }, [shape, color, layers, product.print, assetTick, thumbAngles?.join()])
 
   return <div ref={hostRef} className="g3d" />
 }

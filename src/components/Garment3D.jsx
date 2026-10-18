@@ -279,7 +279,10 @@ const shapes = new Map()
 function loadShape(src) {
   if (!shapes.has(src)) {
     const maskSrc = src.replace(/\.\w+$/, '-mask.png')
-    shapes.set(src, Promise.all([loadImage(src), loadImage(maskSrc)]).then(([img, maskImg]) => {
+    // a retouched copy of the photo with the front-only details removed (public/<name>-back.jpg)
+    const backSrc = src.replace(/\.\w+$/, '-back.jpg')
+    const back = loadImage(backSrc).catch(() => null)
+    shapes.set(src, Promise.all([loadImage(src), loadImage(maskSrc), back]).then(([img, maskImg, backImg]) => {
       const c = document.createElement('canvas')
       c.width = TEX_W; c.height = TEX_H
       const ctx = c.getContext('2d', { willReadFrequently: true })
@@ -298,7 +301,7 @@ function loadShape(src) {
         alpha[i] = maskData[i * 4]
         keep[i] = alpha[i] > 127 ? 1 : 0
       }
-      const backPhoto = synthBack(photo, alpha)
+      const backPhoto = backImg ? cover(backImg) : synthBack(photo, alpha)
       return {
         photo, backPhoto, masks: maskCanvases(alpha),
         bumps: { front: bumpCanvas(photo, alpha, false), back: bumpCanvas(backPhoto, alpha, true) },

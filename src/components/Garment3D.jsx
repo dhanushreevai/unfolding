@@ -7,7 +7,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 // the front (left half) and back (right half), so a print's x/y on the garment maps 1:1 to pixels.
 
 const W_REF = 0.34
-const Y_MIN = -0.5
+const Y_MIN = -0.62
 const Y_MAX = 0.42
 const PX = 1600 // texture pixels per unit
 const TEX_W = Math.round(4 * W_REF * PX)
@@ -28,16 +28,18 @@ const MODELS = {
     print: { x0: -0.115, x1: 0.115, y0: -0.13, y1: 0.165 },
   },
   hoodie: {
-    hem: -0.46, band: 0.065, shoulder: 0.16, neckRise: 0.08,
-    width: [[0, 0.236], [0.09, 0.244], [0.13, 0.268], [0.5, 0.272], [1, 0.272]],
+    hem: -0.55, band: 0.07, shoulder: 0.16, neckRise: 0.06,
+    width: [[0, 0.232], [0.09, 0.24], [0.15, 0.272], [0.5, 0.277], [1, 0.28]],
     depthFront: [[0, 0.1], [0.5, 0.125], [1, 0.115]],
     depthBack: [[0, 0.098], [0.5, 0.11], [1, 0.108]],
     neck: { w: 0.1, d: 0.082, frontDrop: 0.02 },
     folds: 2,
-    sleeve: { base: [0.238, 0.07, 0], dir: [0.3, -1, 0.04], back: 0.06, length: 0.52, ra: [0.084, 0.06], rb: [0.07, 0.05], cuff: 0.065 },
-    hood: { center: [0, 0.29, -0.05], radii: [0.15, 0.15, 0.15], open: 0.85, theta: 0.74 * Math.PI },
-    pocket: { top: -0.16, bottom: -0.375, topHalf: 0.1, bottomHalf: 0.165 },
-    print: { x0: -0.11, x1: 0.11, y0: -0.12, y1: 0.12 },
+    // drop shoulders, full sleeves hanging beside the body, bunching above wide ribbed cuffs
+    sleeve: { bend: { center: [0.15, -0.035], radius: 0.15, endAngle: 0.1 }, back: 0.07, length: 0.68, ra: [0.09, 0.075], rb: [0.085, 0.068], cuff: 0.07, cuffScale: 0.78, bunch: 0.045 },
+    hood: { center: [0, 0.245, -0.035], radii: [0.215, 0.125, 0.175], facing: [0, 0.96, 0.28], open: 0.5, vee: 1.15, bottom: 2.75, rim: 0.016 },
+    strings: { spread: 0.035, end: 0.0 },
+    pocket: { top: -0.19, bottom: -0.47, topHalf: 0.135, bottomHalf: 0.17 },
+    print: { x0: -0.11, x1: 0.11, y0: -0.15, y1: 0.12 },
   },
 }
 
@@ -205,17 +207,38 @@ function buildBody(m) {
 
 function buildSleeve(m) {
   const s = m.sleeve
-  const base = new THREE.Vector3(...s.base)
-  const T = new THREE.Vector3(...s.dir).normalize()
-  const N = new THREE.Vector3(0, 0, 1).cross(T).normalize()
-  const B = new THREE.Vector3().crossVectors(T, N)
+  const Z = new THREE.Vector3(0, 0, 1)
+  // Axis of the sleeve. Straight sleeves run from `base` along `dir`. Drop-shoulder sleeves
+  // (`bend`) leave the shoulder sideways, curve over a wide arc and then hang down, so the
+  // shoulder line runs smoothly into the arm.
+  const axis = (sv) => {
+    if (!s.bend) {
+      const T = new THREE.Vector3(...s.dir).normalize()
+      return { c: new THREE.Vector3(...s.base).addScaledVector(T, sv), T }
+    }
+    const { center: [cx, cy], radius: R, endAngle } = s.bend
+    const arcLen = R * (Math.PI / 2 - endAngle)
+    if (sv <= 0) return { c: new THREE.Vector3(cx + sv, cy + R, 0), T: new THREE.Vector3(1, 0, 0) }
+    if (sv <= arcLen) {
+      const a = Math.PI / 2 - sv / R
+      return { c: new THREE.Vector3(cx + R * Math.cos(a), cy + R * Math.sin(a), 0), T: new THREE.Vector3(Math.sin(a), -Math.cos(a), 0) }
+    }
+    const T = new THREE.Vector3(Math.sin(endAngle), -Math.cos(endAngle), 0)
+    const end = new THREE.Vector3(cx + R * Math.cos(endAngle), cy + R * Math.sin(endAngle), 0)
+    return { c: end.addScaledVector(T, sv - arcLen), T }
+  }
+  const frame = (sv) => {
+    const { c, T } = axis(sv)
+    const N = Z.clone().cross(T).normalize()
+    return { c, T, N, B: new THREE.Vector3().crossVectors(T, N) }
+  }
+  const center = (sv) => axis(sv).c
   const s0 = -s.back, s1 = s.length
   const ROWS = 40, COLS = 56
   const radii = (sv) => {
     const k = Math.max(0, sv) / s.length
     return [s.ra[0] + (s.ra[1] - s.ra[0]) * k, s.rb[0] + (s.rb[1] - s.rb[0]) * k]
   }
-  const center = (sv) => base.clone().addScaledVector(T, sv)
   const svAt = (r) => s0 + ((s1 - s0) * r) / (ROWS - 1)
   const surf = gridSurface(ROWS, COLS, (r, c) => {
     const sv = svAt(r)
@@ -224,15 +247,23 @@ function buildSleeve(m) {
     // creases around the elbow / underarm
     const crease = 1 + 0.03 * m.folds * Math.sin(th * 3 + sv * 30) * smoothstep(0, 0.1, sv)
       + 0.03 * m.folds * (vnoise(Math.cos(th) * 2 + 5, Math.sin(th) * 2, sv * 12) - 0.5)
-    const p = center(sv).addScaledVector(N, ra * crease * Math.cos(th)).addScaledVector(B, rb * crease * Math.sin(th))
+      + (s.bunch || 0) * Math.sin(sv * 70 + Math.cos(th) * 1.5) * smoothstep(s.length * 0.5, s.length * 0.95, sv)
+    // gather into the cuff
+    const taper = s.cuffScale ? 1 - (1 - s.cuffScale * 1.03) * smoothstep(s.length * 0.82, s.length, sv) : 1
+    const { c: ctr, N, B } = frame(sv)
+    const p = ctr.addScaledVector(N, ra * crease * taper * Math.cos(th)).addScaledVector(B, rb * crease * taper * Math.sin(th))
     return [p.x, p.y, p.z]
   }, (r, c, p) => p.clone().sub(center(svAt(r))))
   const circ = Math.PI * (s.ra[0] + s.rb[0])
   const geo = gridGeometry(surf, [[0, COLS]], (x, y, z, r, c) => [((c / COLS) * circ) / TILE, (svAt(r) - s0) / TILE])
   // round cap where the sleeve meets the shoulder, so its start never shows as an open tube
-  const cap = new THREE.SphereGeometry(1, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2)
-  cap.scale(s.ra[0] * 0.96, s.back * 0.5, s.rb[0] * 0.96)
-  cap.applyMatrix4(new THREE.Matrix4().makeBasis(N, T.clone().negate(), B).setPosition(center(s0)))
+  let cap = null
+  if (!s.bend) {
+    const { N, T, B } = frame(s0)
+    cap = new THREE.SphereGeometry(1, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2)
+    cap.scale(s.ra[0] * 0.96, s.back * 0.5, s.rb[0] * 0.96)
+    cap.applyMatrix4(new THREE.Matrix4().makeBasis(N, T.clone().negate(), B).setPosition(center(s0)))
+  }
   const end = ringPoints(surf, ROWS - 1)
   let cuff = null
   if (s.cuff) {
@@ -240,7 +271,9 @@ function buildSleeve(m) {
     const cuffSurf = gridSurface(8, COLS, (r, c) => {
       const sv = s.length - 0.01 + ((s.cuff + 0.01) * r) / 7
       const th = (c / COLS) * Math.PI * 2
-      const p = center(sv).addScaledVector(N, ra * 0.9 * Math.cos(th)).addScaledVector(B, rb * 0.9 * Math.sin(th))
+      const k = s.cuffScale || 0.9
+      const { c: ctr, N, B } = frame(sv)
+      const p = ctr.addScaledVector(N, ra * k * Math.cos(th)).addScaledVector(B, rb * k * Math.sin(th))
       return [p.x, p.y, p.z]
     }, () => new THREE.Vector3(), true)
     // outward for the cuff: away from the sleeve axis
@@ -257,48 +290,63 @@ function buildSleeve(m) {
   return { geo, cap, end, cuff }
 }
 
+// A hood worn "down but full", like a folded product shot: a soft dome around the neck whose
+// opening faces up and forwards and narrows into a V at the front, where the two edges meet.
 function buildHood(m) {
   const h = m.hood
   const center = new THREE.Vector3(...h.center)
   const [rx, ry, rz] = h.radii
-  const ROWS = 36, COLS = 72
-  const ph0 = Math.PI / 2 + h.open, ph1 = Math.PI / 2 - h.open + Math.PI * 2
-  const point = (th, ph) => new THREE.Vector3(
-    -Math.cos(ph) * Math.sin(th) * rx + center.x,
-    Math.cos(th) * ry + center.y,
-    Math.sin(ph) * Math.sin(th) * rz + center.z,
-  )
+  const A = new THREE.Vector3(...h.facing).normalize() // the way the opening faces
+  const U = new THREE.Vector3(1, 0, 0)
+  const V = new THREE.Vector3().crossVectors(A, U).normalize() // up-back; -V is down-front
+  const ROWS = 40, COLS = 96
+  // opening radius around A, stretched towards the front so the edges meet in a V at the neck
+  const openAt = (ph) => h.open + h.vee * Math.max(0, -Math.sin(ph)) ** 3
+  const point = (th, ph, sag = 0) => {
+    const d = A.clone().multiplyScalar(Math.cos(th))
+      .addScaledVector(U, Math.sin(th) * Math.cos(ph))
+      .addScaledVector(V, Math.sin(th) * Math.sin(ph))
+    // soft fabric: a little irregular bulge so it doesn't read as a shell
+    const bulge = 1 + sag * (vnoise(d.x * 3 + 7, d.y * 3, d.z * 3) - 0.5)
+    return new THREE.Vector3(center.x + d.x * rx * bulge, center.y + d.y * ry * bulge, center.z + d.z * rz * bulge)
+  }
+  const thAt = (r, ph) => openAt(ph) + ((h.bottom - openAt(ph)) * r) / (ROWS - 1)
   const surf = gridSurface(ROWS, COLS, (r, c) => {
-    const th = 0.03 + ((h.theta - 0.03) * r) / (ROWS - 1)
-    const ph = ph0 + ((ph1 - ph0) * c) / (COLS - 1)
-    const p = point(th, ph)
-    // a slight sag so the hood reads as fabric rather than a shell
-    p.y -= 0.012 * Math.sin((c / (COLS - 1)) * Math.PI) * smoothstep(0.2, 1, r / (ROWS - 1))
+    const ph = (c / COLS) * Math.PI * 2
+    const p = point(thAt(r, ph), ph, 0.12)
     return [p.x, p.y, p.z]
-  }, (r, c, p) => p.clone().sub(center), false)
-  const geo = gridGeometry(surf, [[0, COLS - 1]], (x, y, z, r, c) => [
-    ((c / (COLS - 1)) * (Math.PI * 2 * rx)) / TILE, ((r / (ROWS - 1)) * (Math.PI * ry)) / TILE,
+  }, (r, c, p) => p.clone().sub(center))
+  const geo = gridGeometry(surf, [[0, COLS]], (x, y, z, r, c) => [
+    ((c / COLS) * Math.PI * 2 * rx) / TILE, ((r / (ROWS - 1)) * Math.PI * ry) / TILE,
   ])
-  // rolled edge around the face opening
-  const rim = []
-  for (let i = 0; i <= 24; i++) rim.push(point(h.theta - 0.1 - ((h.theta - 0.15) * i) / 24, ph0))
-  for (let i = 0; i <= 24; i++) rim.push(point(0.05 + ((h.theta - 0.15) * i) / 24, ph1))
-  const rimGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rim), 140, 0.013, 12, false)
-  return { geo, rimGeo, point, ph0, ph1 }
+  // thick rolled edge around the opening
+  const rimPts = []
+  for (let c = 0; c < COLS; c++) {
+    const ph = (c / COLS) * Math.PI * 2
+    rimPts.push(point(openAt(ph) + 0.03, ph, 0.12))
+  }
+  const rimGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rimPts, true), 220, h.rim, 12, true)
+  // where the drawstrings come out: either side of the V
+  const eyelet = (side) => {
+    const ph = -Math.PI / 2 + side * 0.32
+    return point(openAt(ph) + 0.06, ph, 0.12)
+  }
+  return { geo, rimGeo, eyelet }
 }
 
 function buildStrings(m, hood) {
   const geos = []
-  const frontZ = (y) => table(m.depthFront, (y - m.hem) / (m.shoulder - m.hem)) + 0.014
+  const frontZ = (y) => table(m.depthFront, (y - m.hem) / (m.shoulder - m.hem)) + 0.012
   for (const side of [-1, 1]) {
-    const start = hood.point(m.hood.theta - 0.42, side < 0 ? hood.ph1 : hood.ph0)
+    const start = hood.eyelet(side)
+    const x = side * m.strings.spread
     const pts = [
       start,
-      new THREE.Vector3(start.x * 0.95, start.y - 0.05, frontZ(start.y - 0.05)),
-      new THREE.Vector3(start.x * 0.9, 0.12, frontZ(0.12)),
-      new THREE.Vector3(start.x * 0.92 + side * 0.006, 0.0, frontZ(0.0)),
+      new THREE.Vector3((start.x + x) / 2, start.y - 0.04, Math.max(start.z, frontZ(start.y - 0.04)) + 0.004),
+      new THREE.Vector3(x, (start.y + m.strings.end) / 2, frontZ((start.y + m.strings.end) / 2)),
+      new THREE.Vector3(x + side * 0.004, m.strings.end, frontZ(m.strings.end)),
     ]
-    geos.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 60, 0.0042, 8, false))
+    geos.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 60, 0.0045, 8, false))
     const tip = new THREE.CylinderGeometry(0.0058, 0.0058, 0.03, 12)
     tip.translate(pts[3].x, pts[3].y - 0.014, pts[3].z)
     geos.push(tip)
@@ -379,8 +427,8 @@ function bodyBumpCanvas(m) {
     stitches(m.hem + 0.022)
   }
   if (m.pocket) {
-    ctx.strokeStyle = 'rgba(0,0,0,0.7)'
-    ctx.lineWidth = 5
+    ctx.strokeStyle = 'rgba(0,0,0,0.9)'
+    ctx.lineWidth = 9
     pocketPath(ctx, m); ctx.stroke()
     ctx.strokeStyle = 'rgba(0,0,0,0.45)'
     ctx.lineWidth = 2.5
@@ -452,8 +500,11 @@ function composeBody(canvas, m, fabric, layers, onAsset) {
   if (m.pocket) {
     // the pocket panel catches a little less light, and its side openings fall into shadow
     const p = m.pocket
-    ctx.fillStyle = 'rgba(0,0,0,0.025)'
+    ctx.fillStyle = 'rgba(0,0,0,0.03)'
     pocketPath(ctx, m); ctx.fill()
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)'
+    ctx.lineWidth = 6
+    pocketPath(ctx, m); ctx.stroke()
     ctx.save()
     pocketPath(ctx, m); ctx.clip()
     for (const s of [-1, 1]) {
@@ -660,7 +711,7 @@ export default function Garment3D({
     for (const mirror of [false, true]) {
       add(parts.sleeve.geo, mat.fabric, { mirror })
       add(parts.sleeve.geo, mat.inner, { mirror, cast: false })
-      add(parts.sleeve.cap, mat.fabric, { mirror })
+      if (parts.sleeve.cap) add(parts.sleeve.cap, mat.fabric, { mirror })
       add(parts.sleeveHem, parts.sleeve.cuff ? mat.rib : mat.fabric, { mirror })
       if (parts.sleeve.cuff) add(parts.sleeve.cuff.geo, mat.rib, { mirror })
     }

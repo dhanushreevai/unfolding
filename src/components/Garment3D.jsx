@@ -4,14 +4,14 @@ import * as THREE from 'three'
 // Texture canvas size — matches the stage's 410:480 aspect ratio.
 export const TEX_W = 820
 export const TEX_H = 960
-const GRID_W = 150
-const GRID_H = 176
+const GRID_W = 200
+const GRID_H = 234
 const PLANE_H = 1
 const PLANE_W = TEX_W / TEX_H
 const FOV = 16
 const CAM_DIST = PLANE_H / 2 / Math.tan(((FOV / 2) * Math.PI) / 180)
-const DEPTH = 0.085 // max half-thickness of the garment body
-const ROUND = 0.2 // distance from the edge over which the body rounds off
+const DEPTH = 0.115 // max half-thickness of the garment body (chest)
+const ROUND = 0.035 // edges (hem, shoulders, cuffs) roll over within this distance
 // The print area sits on the bulged surface, slightly nearer the camera than z=0.
 export const OVERLAY_SCALE = CAM_DIST / (CAM_DIST - DEPTH)
 
@@ -27,7 +27,24 @@ const loadImage = (src) => new Promise((resolve, reject) => {
 /* ---------- silhouette mask + inflated mesh ---------- */
 
 // Each garment photo has a pre-cut alpha mask next to it (public/<name>-mask.png).
+function dilate(alpha, r) {
+  const W = TEX_W, H = TEX_H
+  const tmp = new Uint8Array(alpha.length), out = new Uint8Array(alpha.length)
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let v = 0
+    for (let k = -r; k <= r; k++) { const xx = x + k; if (xx >= 0 && xx < W && alpha[y * W + xx] > v) v = alpha[y * W + xx] }
+    tmp[y * W + x] = v
+  }
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let v = 0
+    for (let k = -r; k <= r; k++) { const yy = y + k; if (yy >= 0 && yy < H && tmp[yy * W + x] > v) v = tmp[yy * W + x] }
+    out[y * W + x] = v
+  }
+  return out
+}
+
 function maskCanvases(alpha) {
+  alpha = dilate(alpha, 2)
   const make = (mirror) => {
     const c = document.createElement('canvas')
     c.width = TEX_W; c.height = TEX_H
@@ -79,14 +96,32 @@ function buildGeometry(keep) {
     if (i > 0 && j < rows - 1) dist[k] = Math.min(dist[k], dist[k + cols - 1] + D)
   }
 
-  // rounded "inflated" profile, smoothed to remove ridges along the medial axis
+  // Body-like volume: every horizontal slice gets an oval cross-section across its width
+  // (deepest in the middle, curving away to the sides), so the torso is round like a body and
+  // narrow parts such as sleeves are proportionally thinner. Edges then roll over smoothly.
   const cell = PLANE_W / GRID_W
   let depth = new Float32Array(V)
-  for (let k = 0; k < V; k++) {
-    const t = Math.min(1, Math.max(0, (dist[k] - 0.7) * cell / ROUND))
-    depth[k] = DEPTH * (1 - (1 - t) * (1 - t))
+  for (let j = 0; j < rows; j++) {
+    let i = 0
+    while (i < cols) {
+      if (!inside[j * cols + i]) { i++; continue }
+      const start = i
+      while (i < cols && inside[j * cols + i]) i++
+      const half = ((i - start) * cell) / 2
+      const mid = (start + i - 1) / 2
+      const peak = Math.min(DEPTH, half * 0.8)
+      for (let x = start; x < i; x++) {
+        // reaches zero depth at the run's last point, so front and back meet right at the outline
+        const u = Math.min(1, (Math.abs(x - mid) * cell) / Math.max(half - cell / 2, cell))
+        depth[j * cols + x] = peak * Math.sqrt(Math.max(0, 1 - u * u))
+      }
+    }
   }
-  for (let pass = 0; pass < 5; pass++) {
+  for (let k = 0; k < V; k++) {
+    const t = Math.min(1, Math.max(0, ((dist[k] - 1.2) * cell) / ROUND))
+    depth[k] *= Math.sqrt(1 - (1 - t) * (1 - t))
+  }
+  for (let pass = 0; pass < 10; pass++) {
     const next = new Float32Array(V)
     for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
       const k = j * cols + i
@@ -275,6 +310,43 @@ function shadingCanvas(photo, alpha, mirror) {
   return c
 }
 
+// The steep sides of the body show the photo's outermost pixels stretched out (a rim light and
+// the dark backdrop), which reads as streaks. Replace a thin band at the edge with the fabric
+// colour found just inside it, fading back to the untouched photo over the band.
+function edgeBleed(photo, alpha, band = 14) {
+  const N = TEX_W * TEX_H
+  const inner = new Float32Array(N)
+  // erode the garment by `band` (a pixel is inner if the whole box around it is garment)
+  const garment = new Float32Array(N)
+  for (let i = 0; i < N; i++) garment[i] = alpha[i] > 127 ? 1 : 0
+  const cover = boxBlur(Float32Array.from(garment), TEX_W, TEX_H, band)
+  for (let i = 0; i < N; i++) inner[i] = cover[i] > 0.999 ? 1 : 0
+  const w = boxBlur(boxBlur(Float32Array.from(inner), TEX_W, TEX_H, band), TEX_W, TEX_H, band)
+  // also colour the thin rim just outside the outline, where the front and back shells meet
+  const near = boxBlur(Float32Array.from(garment), TEX_W, TEX_H, 6)
+  const out = new ImageData(new Uint8ClampedArray(photo.data), TEX_W, TEX_H)
+  for (let c = 0; c < 3; c++) {
+    const ch = new Float32Array(N)
+    for (let i = 0; i < N; i++) ch[i] = photo.data[i * 4 + c] * inner[i]
+    boxBlur(boxBlur(ch, TEX_W, TEX_H, band), TEX_W, TEX_H, band)
+    for (let i = 0; i < N; i++) {
+      if (inner[i] || (!garment[i] && near[i] <= 0)) continue
+      const fill = w[i] > 0.001 ? ch[i] / w[i] : photo.data[i * 4 + c]
+      // 0 at the very edge -> all fill; deeper inside -> the photo
+      if (!garment[i]) {
+        // outside: fabric colour right at the outline, fading to the dark backdrop further out,
+        // so the seam between the shells is filled but the outline stays crisp
+        const t = Math.min(1, Math.max(0, (near[i] - 0.12) / 0.12))
+        out.data[i * 4 + c] = photo.data[i * 4 + c] + (fill - photo.data[i * 4 + c]) * t
+        continue
+      }
+      const k = Math.min(1, Math.max(0, (cover[i] - 0.55) / 0.4))
+      out.data[i * 4 + c] = fill + (photo.data[i * 4 + c] - fill) * k * k
+    }
+  }
+  return out
+}
+
 const shapes = new Map()
 function loadShape(src) {
   if (!shapes.has(src)) {
@@ -301,9 +373,12 @@ function loadShape(src) {
         alpha[i] = maskData[i * 4]
         keep[i] = alpha[i] > 127 ? 1 : 0
       }
-      const backPhoto = backImg ? cover(backImg) : synthBack(photo, alpha)
+      const rawBack = backImg ? cover(backImg) : synthBack(photo, alpha)
+      // clean the outer edge of both faces so the curved sides don't show stretched streaks
+      const backPhoto = edgeBleed(rawBack, alpha)
+      const frontPhoto = edgeBleed(photo, alpha)
       return {
-        photo, backPhoto, masks: maskCanvases(alpha),
+        photo: frontPhoto, backPhoto, masks: maskCanvases(alpha),
         bumps: { front: bumpCanvas(photo, alpha, false), back: bumpCanvas(backPhoto, alpha, true) },
         shading: { front: shadingCanvas(photo, alpha, false), back: shadingCanvas(backPhoto, alpha, true) },
         geometry: buildGeometry(keep), tinted: new Map(),
@@ -450,7 +525,10 @@ function photoMaterial(map, isBack) {
         vec3 L = normalize(vec3(0.35, 0.45, 1.0)); // roughly where the product shots were lit from
         float lit = max(dot(normalize(vWorldN), L), 0.0) * 0.8 + 0.2;
         float was = max(dot(normalize(vRestN), L), 0.0) * 0.8 + 0.2;
-        diffuseColor.rgb *= clamp(lit / was, 0.3, 1.12);
+        // surfaces turning edge-on to the camera fall into soft shadow, as real cloth does
+        float edgeNow = 1.0 - 0.45 * pow(1.0 - abs(normalize(vWorldN).z), 2.0);
+        float edgeWas = 1.0 - 0.45 * pow(1.0 - abs(normalize(vRestN).z), 2.0);
+        diffuseColor.rgb *= clamp((lit / was) * (edgeNow / edgeWas), 0.25, 1.12);
       }`)
   }
   return mat

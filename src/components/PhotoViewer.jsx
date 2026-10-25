@@ -200,7 +200,7 @@ export default function PhotoViewer({
   useEffect(() => { onZoom?.(!!hover && !immediate) }, [!!hover && !immediate])
 
   const onMove = (e) => {
-    if (!showcase || immediate) return
+    if (!showcase || immediate || e.pointerType !== 'mouse') return
     const r = hostRef.current.getBoundingClientRect()
     setHover({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height })
   }

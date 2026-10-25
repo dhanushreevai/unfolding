@@ -346,7 +346,7 @@ export default function Designer({ product, onChangeProduct, onAddToBag, onOrder
           <svg width="14" height="20" viewBox="0 0 14 20" fill="none" stroke="currentColor" strokeWidth="1.2">
             <rect x="1" y="1" width="12" height="18" rx="6" /><path d="M7 5v3" />
           </svg>
-          Swipe to browse · hover to zoom
+          Swipe to browse<span className="hover-only"> · hover to zoom</span>
         </div>
         <div className="thumbs">
           {VIEWS.map((v, i) => (

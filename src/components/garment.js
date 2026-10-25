@@ -58,15 +58,15 @@ export function useSpin({ settleFaces = false, autoplay = false } = {}) {
 
   const onPointerDown = (e) => {
     touch()
-    const startX = e.clientX, startAngle = angle
+    const startX = e.clientX, startY = e.clientY, startAngle = angle
     let moved = false
     let last = { x: e.clientX, t: performance.now() }, velocity = 0 // degrees per second
     const el = e.currentTarget
     el.setPointerCapture(e.pointerId)
     const move = (ev) => {
       touch()
-      const dx = ev.clientX - startX
-      if (Math.abs(dx) > 3) { moved = true; setDragging(true) }
+      const dx = ev.clientX - startX, dy = ev.clientY - startY
+      if (!moved && Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) * 1.2) { moved = true; setDragging(true) }
       if (moved) setAngleState(startAngle + dx * 0.35)
       const now = performance.now(), dt = Math.max(1, now - last.t)
       velocity = velocity * 0.6 + (((ev.clientX - last.x) * 0.35) / dt) * 1000 * 0.4

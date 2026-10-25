@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import Garment3D from './Garment3D.jsx'
+import Garment3D from './PhotoViewer.jsx'
 import Review from './Review.jsx'
 import { Details, Payment, emptyCustomer } from './Checkout.jsx'
 import Confirmation from './Confirmation.jsx'
-import { PRODUCTS, SIZES, VIEWS, nearestEquivalent, viewFromAngle, useSpin } from './garment.js'
+import { PRODUCTS, SIZES, VIEWS, isSquare, nearestEquivalent, viewFromAngle, useSpin } from './garment.js'
 
 const FONTS = [
   { label: 'Bold', family: "'Montserrat', sans-serif", weight: 900 },
@@ -211,10 +211,11 @@ export default function Designer({ product, onChangeProduct, onAddToBag, onOrder
   const [tab, setTab] = useState('design')
   const [layers, setLayers] = useState([])
   const [selectedId, setSelectedId] = useState(null)
-  const { angle, setAngle, dragging, onPointerDown: spinDown } = useSpin(true)
+  const { angle, setAngle, dragging, onPointerDown: spinDown } = useSpin()
   const [settled, setSettled] = useState(true)
   const [thumbs, setThumbs] = useState([])
   const [printRect, setPrintRect] = useState(null)
+  const [zoomed, setZoomed] = useState(false)
   // checkout
   const [previews, setPreviews] = useState([])
   const [customer, setCustomer] = useState(emptyCustomer)
@@ -320,24 +321,39 @@ export default function Designer({ product, onChangeProduct, onAddToBag, onOrder
 
       {/* centre: garment */}
       <section className="canvas">
-        <div className="stage" onPointerDown={onStageDown}>
-          <Garment3D {...garmentProps} angle={angle} immediate={dragging} onSettle={setSettled} onPrintRect={setPrintRect}
-            thumbAngles={THUMB_ANGLES} onThumbs={setThumbs} />
-          <div className="floor" />
-          {settled && !dragging && printRect && (view.id === 'front' || view.id === 'back') && (
-            <PrintOverlay print={printRect} side={activeSide} layers={layers}
-              selectedId={selectedId} onSelect={setSelectedId} onMove={updateLayer} />
-          )}
+        {/* same presentation as the review page: round arrows, spotlight, hover zoom */}
+        <div className="showcase">
+          <button className="round-arrow prev" aria-label="Previous view" onClick={() => stepView(-1)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M15 5l-7 7 7 7" /></svg>
+          </button>
+          <div className="stage" onPointerDown={onStageDown}>
+            <div className="floor spot" />
+            <Garment3D {...garmentProps} angle={angle} immediate={dragging} onSettle={setSettled} onPrintRect={setPrintRect}
+              thumbAngles={THUMB_ANGLES} onThumbs={setThumbs} showcase onZoom={setZoomed} />
+            {settled && !dragging && printRect && isSquare(angle) && (
+              // the print box steps aside while the photo is zoomed, and returns when the pointer reaches it
+              <div className={`print-overlay-wrap${zoomed ? ' hidden' : ''}`}>
+                <PrintOverlay print={printRect} side={activeSide} layers={layers}
+                  selectedId={selectedId} onSelect={setSelectedId} onMove={updateLayer} />
+              </div>
+            )}
+          </div>
+          <button className="round-arrow next" aria-label="Next view" onClick={() => stepView(1)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M9 5l7 7-7 7" /></svg>
+          </button>
         </div>
-        <div className="drag-hint">Drag to rotate</div>
+        <div className="drag-hint with-icon">
+          <svg width="14" height="20" viewBox="0 0 14 20" fill="none" stroke="currentColor" strokeWidth="1.2">
+            <rect x="1" y="1" width="12" height="18" rx="6" /><path d="M7 5v3" />
+          </svg>
+          Swipe to browse · hover to zoom
+        </div>
         <div className="thumbs">
-          <button className="arrow" aria-label="Previous view" onClick={() => stepView(-1)}>‹</button>
           {VIEWS.map((v, i) => (
             <button key={v.id} className={`thumb${v.id === view.id ? ' on' : ''}`} onClick={() => goToView(v)} aria-label={v.label}>
               {thumbs[i] && <img src={thumbs[i]} alt="" draggable="false" />}
             </button>
           ))}
-          <button className="arrow" aria-label="Next view" onClick={() => stepView(1)}>›</button>
         </div>
       </section>
 

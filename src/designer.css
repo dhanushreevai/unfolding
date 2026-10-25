@@ -45,7 +45,29 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .canvas { display: flex; flex-direction: column; align-items: center; }
 .stage { position: relative; width: min(100%, 540px); aspect-ratio: 410 / 480; cursor: grab; touch-action: none; user-select: none; }
 .stage:active { cursor: grabbing; }
-.g3d { position: absolute; inset: 0; z-index: 1; }
+.g3d { position: absolute; inset: 0; z-index: 1; animation: g3d-in .9s cubic-bezier(.2,.7,.2,1) both; }
+.g3d-ghost { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; will-change: opacity, filter, transform; }
+
+/* photo gallery (PhotoViewer.jsx): stacked shots that crossfade, close-ups and hover zoom */
+.photo-viewer { overflow: hidden; border-radius: 4px; }
+.photo-viewer .shot {
+  position: absolute; inset: 0; overflow: hidden;
+  opacity: 0; transform: scale(1.035); filter: blur(3px);
+  transition: opacity .55s ease, transform .9s cubic-bezier(.2,.7,.2,1), filter .55s ease;
+}
+.photo-viewer .shot.on { opacity: 1; transform: none; filter: none; z-index: 1; }
+.photo-viewer .shot img {
+  display: block; width: 100%; height: 100%; object-fit: cover; user-select: none; pointer-events: none;
+  transition: transform .45s cubic-bezier(.2,.7,.2,1), transform-origin .2s linear;
+}
+.photo-viewer.zoomable .shot.on { cursor: zoom-in; }
+.stage:active .photo-viewer .shot { transition: opacity .55s ease, filter .55s ease; }
+@media (prefers-reduced-motion: reduce) { .photo-viewer .shot, .photo-viewer .shot img { transition: opacity .3s ease; } }
+@keyframes g3d-in {
+  from { opacity: 0; transform: translateY(18px) scale(.97); filter: blur(6px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@media (prefers-reduced-motion: reduce) { .g3d { animation: none; } }
 .g3d canvas { display: block; width: 100%; height: 100%; }
 .floor {
   position: absolute; left: 18%; right: 18%; bottom: 2%; height: 7%; z-index: 0; pointer-events: none;
@@ -53,6 +75,9 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   filter: blur(4px);
 }
 .print-overlay { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.print-overlay-wrap { position: absolute; inset: 0; z-index: 2; pointer-events: none; transition: opacity .3s ease; }
+.print-overlay-wrap.hidden { opacity: 0; }
+.canvas .showcase .stage { width: min(100%, 540px); }
 .print-overlay .print-area { pointer-events: auto; }
 .print-overlay .layer > * { opacity: 0; }
 .print-area { position: absolute; container-type: inline-size; }
@@ -384,3 +409,6 @@ button.back-link { background: none; border: 0; cursor: pointer; padding: 0; tex
   .timeline small { white-space: normal; }
   .confirm-actions { grid-template-columns: 1fr; }
 }
+/* offscreen 3D renderer that produces the side shots */
+.side-renderer { position: fixed; left: -10000px; top: 0; width: 540px; aspect-ratio: 410 / 480; pointer-events: none; }
+.side-renderer .g3d { animation: none; }

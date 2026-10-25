@@ -63,7 +63,50 @@ function maskCanvases(alpha) {
   return { front: make(false), back: make(true) }
 }
 
-function buildGeometry(keep) {
+// Folds and creases in the photo become real relief: brighter (raised) fabric is pushed out,
+// shadowed creases are pushed in. Band-passed so only fold-sized detail moves, not overall shading.
+const RELIEF = 0.005
+export const SIDE_ANGLE = 40 // how far round the left/right shots are taken
+function foldRelief(photo, inside, cols, rows) {
+  const V = cols * rows
+  const lum = new Float32Array(V)
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    const px = Math.min(TEX_W - 1, Math.round((i / GRID_W) * (TEX_W - 1)))
+    const py = Math.min(TEX_H - 1, Math.round((j / GRID_H) * (TEX_H - 1)))
+    const o = (py * TEX_W + px) * 4
+    lum[j * cols + i] = (photo.data[o] * 0.3 + photo.data[o + 1] * 0.59 + photo.data[o + 2] * 0.11) / 255
+  }
+  const blur = (src, passes) => {
+    let a = src
+    for (let p = 0; p < passes; p++) {
+      const next = new Float32Array(V)
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+        const k = j * cols + i
+        if (!inside[k]) { next[k] = a[k]; continue }
+        let t = 0, n = 0
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const ii = i + dx, jj = j + dy
+          if (ii < 0 || jj < 0 || ii >= cols || jj >= rows || !inside[jj * cols + ii]) continue
+          t += a[jj * cols + ii]; n++
+        }
+        next[k] = n ? t / n : a[k]
+      }
+      a = next
+    }
+    return a
+  }
+  const fine = blur(lum, 4)
+  const broad = blur(fine, 14)
+  // normalise by local contrast so the dark hoodie gets folds as deep as the white tee
+  let sum = 0, n = 0
+  for (let k = 0; k < V; k++) if (inside[k]) { sum += Math.abs(fine[k] - broad[k]); n++ }
+  const scale = RELIEF / Math.max(1e-4, (sum / Math.max(1, n)) * 2.5)
+  const out = new Float32Array(V)
+  for (let k = 0; k < V; k++) out[k] = inside[k] ? Math.max(-RELIEF, Math.min(RELIEF, (fine[k] - broad[k]) * scale)) : 0
+  return out
+}
+
+function buildGeometry(keep, frontPhoto, backPhoto) {
   const cols = GRID_W + 1, rows = GRID_H + 1, V = cols * rows
   const inside = new Uint8Array(V)
   for (let j = 0; j < rows; j++) {
@@ -137,6 +180,8 @@ function buildGeometry(keep) {
     depth = next
   }
 
+  const reliefF = frontPhoto ? foldRelief(frontPhoto, inside, cols, rows) : new Float32Array(V)
+  const reliefB = backPhoto ? foldRelief(backPhoto, inside, cols, rows) : new Float32Array(V)
   const pos = new Float32Array(V * 2 * 3)
   const uv = new Float32Array(V * 2 * 2)
   for (let s = 0; s < 2; s++) {
@@ -144,7 +189,9 @@ function buildGeometry(keep) {
       const k = j * cols + i, o = s * V + k
       pos[o * 3] = (i / GRID_W - 0.5) * PLANE_W
       pos[o * 3 + 1] = (0.5 - j / GRID_H) * PLANE_H
-      pos[o * 3 + 2] = s ? -depth[k] : depth[k]
+      // relief fades out towards the outline so the two shells still meet cleanly
+      const fade = Math.min(1, depth[k] / (DEPTH * 0.35))
+      pos[o * 3 + 2] = s ? -(depth[k] + reliefB[k] * fade) : depth[k] + reliefF[k] * fade
       // the back shell's u is flipped so its texture reads correctly when seen from behind
       uv[o * 2] = s ? 1 - i / GRID_W : i / GRID_W
       uv[o * 2 + 1] = 1 - j / GRID_H
@@ -381,7 +428,7 @@ function loadShape(src) {
         photo: frontPhoto, backPhoto, masks: maskCanvases(alpha),
         bumps: { front: bumpCanvas(photo, alpha, false), back: bumpCanvas(backPhoto, alpha, true) },
         shading: { front: shadingCanvas(photo, alpha, false), back: shadingCanvas(backPhoto, alpha, true) },
-        geometry: buildGeometry(keep), tinted: new Map(),
+        geometry: buildGeometry(keep, photo, rawBack), tinted: new Map(),
       }
     }))
   }
@@ -538,7 +585,7 @@ function photoMaterial(map, isBack) {
 
 export default function Garment3D({
   product, color, layers, angle, immediate = false, autoRotate = false, showcase = false,
-  onSettle, onThumbs, thumbAngles, onPrintRect,
+  onSettle, onThumbs, thumbAngles, onPrintRect, fullSnapshots = false,
 }) {
   const hostRef = useRef(null)
   const three = useRef(null)
@@ -630,29 +677,79 @@ export default function Garment3D({
 
     const st = {
       renderer, scene, camera, pivot, mesh, shadow, textures, bumpMaps,
-      dirty: true, current: live.current.angle, spin: 0, sway: 0, settled: true,
+      dirty: true, current: live.current.angle, spin: 0, sway: 0, settled: true, hx: 0, hy: 0, pointer: null, enter: 0,
     }
     three.current = st
     resize()
 
+    const onMove = (e) => {
+      const r = host.getBoundingClientRect()
+      st.pointer = { x: Math.max(-1, Math.min(1, ((e.clientX - r.left) / r.width) * 2 - 1)), y: Math.max(-1, Math.min(1, ((e.clientY - r.top) / r.height) * 2 - 1)) }
+    }
+    const onLeave = () => { st.pointer = null }
+    const stage = host.parentElement
+    stage.addEventListener('pointermove', onMove)
+    stage.addEventListener('pointerleave', onLeave)
+
     let raf, last = performance.now()
+    // The photo only holds up within a modest turn, so the shirt never shows a made-up side view:
+    // - the requested angle is split into a face (front/back) and an offset from it
+    // - the offset is softly limited to about +-30 degrees (it pulls back like a spring)
+    // - crossing to the other face plays a quick fade/blur flip instead of an edge-on view
+    // - the pointer adds a gentle floating tilt, and showcase pages breathe slowly
+    // Product-photo viewer: four fixed shots (front, right, back, left). Moving between shots
+    // crossfades from a frozen copy of the old shot, so the model is never seen spinning. Within a
+    // shot the garment still tilts a little with the drag and pointer for a sense of depth.
+    const SHOTS = [0, SIDE_ANGLE, 180, -SIDE_ANGLE]
+    const LIMIT = 14
+    const soft = (x) => LIMIT * Math.tanh(x / LIMIT)
+    const wrap = (a) => ((((a + 180) % 360) + 360) % 360) - 180
+    const nearestShot = (a) => SHOTS.reduce((b, v) => (Math.abs(wrap(a - v)) < Math.abs(wrap(a - b)) ? v : b), 0)
+    // frozen copy of the outgoing shot, laid over the live canvas while it fades away
+    const ghost = document.createElement('canvas')
+    ghost.className = 'g3d-ghost'
+    host.appendChild(ghost)
+    const fade = { t: 1, dir: 0 }
     const frame = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
-      const { angle: target, immediate: imm, autoRotate: auto, showcase: show, onSettle: settleCb } = live.current
-      if (imm) st.current = target
-      else st.current += (target - st.current) * (1 - Math.exp(-dt * 9))
-      if (auto) st.spin += dt * 22
-      // a slow, gentle sway while idle; eases out while the user drags
-      st.sway += dt
-      const swayAmount = show && !imm ? Math.sin(st.sway * 0.8) * 4 : 0
-      const moving = Math.abs(target - st.current) > 0.05
-      if (moving || auto || show || st.dirty) {
-        pivot.rotation.y = rad(st.current + st.spin + swayAmount)
+      const { angle: target, immediate: imm, showcase: show, onSettle: settleCb } = live.current
+      st.current += (target - st.current) * (1 - Math.exp(-dt * (imm ? 20 : 7)))
+      const shot = nearestShot(st.current)
+      if (st.shot === undefined) st.shot = shot
+      if (shot !== st.shot && fade.t >= 0.6) {
+        // freeze what is on screen, then cut the live view to the new shot underneath it
+        // re-render the outgoing pose (still set on the pivot) and copy it in the same task,
+        // while the WebGL drawing buffer is guaranteed to hold it
         renderer.render(scene, camera)
-        st.dirty = false
+        ghost.width = renderer.domElement.width
+        ghost.height = renderer.domElement.height
+        ghost.getContext('2d').drawImage(renderer.domElement, 0, 0)
+        fade.dir = Math.sign(wrap(shot - st.shot)) || 1
+        st.enter = -fade.dir * 9 // the new shot drifts the last few degrees into place
+        st.shot = shot
+        fade.t = 0
       }
-      const settled = !imm && Math.abs(target - st.current) < 0.6
+      if (fade.t < 1) fade.t = Math.min(1, fade.t + dt / 0.6)
+      const e = fade.t * fade.t * (3 - 2 * fade.t)
+      const gs = fade.t < 1
+        ? `opacity:${(1 - e).toFixed(3)};filter:blur(${(5 * e).toFixed(2)}px);transform:scale(${(1 + 0.025 * e).toFixed(4)}) translateX(${(-fade.dir * 2.5 * e).toFixed(2)}%)`
+        : 'opacity:0'
+      if (ghost.style.cssText !== gs) ghost.style.cssText = gs
+      st.enter *= Math.exp(-dt * 5)
+      const offset = soft(wrap(st.current - st.shot)) + st.enter
+      // floating tilt towards the pointer, and a slow breathing sway when idle
+      st.hx += ((st.pointer ? st.pointer.x : 0) - st.hx) * (1 - Math.exp(-dt * 4))
+      st.hy += ((st.pointer ? st.pointer.y : 0) - st.hy) * (1 - Math.exp(-dt * 4))
+      st.sway += dt
+      const breathe = show && !imm ? Math.sin(st.sway * 0.6) * 3 : 0
+      const yaw = st.shot + offset + st.hx * 6 + breathe
+      const pitch = st.hy * 3 + (show && !imm ? Math.sin(st.sway * 0.45) * 1 : 0)
+      pivot.rotation.y = rad(yaw)
+      pivot.rotation.x = rad(pitch)
+      renderer.render(scene, camera)
+      st.dirty = false
+      const settled = !imm && fade.t >= 1 && Math.abs(st.enter) < 0.5 && Math.abs(target - st.current) < 0.6
       if (settled !== st.settled) { st.settled = settled; settleCb?.(settled) }
       raf = requestAnimationFrame(frame)
     }
@@ -661,6 +758,8 @@ export default function Garment3D({
     return () => {
       cancelAnimationFrame(raf)
       ro.disconnect()
+      stage.removeEventListener('pointermove', onMove)
+      stage.removeEventListener('pointerleave', onLeave)
       textures.forEach((t) => t.dispose())
       bumpMaps.forEach((t) => t.dispose())
       materials.forEach((m) => m.dispose())
@@ -669,6 +768,7 @@ export default function Garment3D({
       shadow.material.dispose()
       renderer.dispose()
       renderer.domElement.remove()
+      ghost.remove()
       three.current = null
     }
   }, [])
@@ -704,10 +804,13 @@ export default function Garment3D({
     const id = setTimeout(() => {
       const { renderer, scene, camera, pivot } = st
       const thumb = document.createElement('canvas')
-      thumb.width = 300; thumb.height = 352
+      // full-size snapshots are used as gallery shots; small ones as thumbnails
+      thumb.width = fullSnapshots ? renderer.domElement.width : 300
+      thumb.height = fullSnapshots ? renderer.domElement.height : 352
       const tctx = thumb.getContext('2d')
       const urls = thumbAngles.map((a) => {
         pivot.rotation.y = rad(a)
+        pivot.rotation.x = 0
         renderer.render(scene, camera)
         tctx.clearRect(0, 0, thumb.width, thumb.height)
         tctx.drawImage(renderer.domElement, 0, 0, thumb.width, thumb.height)

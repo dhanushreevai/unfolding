@@ -1,4 +1,4 @@
-import Garment3D from './Garment3D.jsx'
+import Garment3D from './PhotoViewer.jsx'
 import { VIEWS, nearestEquivalent, viewFromAngle, useSpin } from './garment.js'
 
 const THUMB_ANGLES = VIEWS.map((v) => v.angle)
@@ -25,7 +25,7 @@ export default function Showcase({
   product, color, layers, thumbs = 'side', top = null, arrows = true, dashes = false,
   thumbUrls = [], onThumbs,
 }) {
-  const { angle, setAngle, dragging, onPointerDown } = useSpin(true)
+  const { angle, setAngle, dragging, onPointerDown } = useSpin({ autoplay: true })
   const view = viewFromAngle(angle)
   const goToView = (v) => setAngle((a) => nearestEquivalent(v.angle, a))
   const stepView = (dir) => goToView(VIEWS[(VIEWS.indexOf(view) + dir + VIEWS.length) % VIEWS.length])
@@ -62,7 +62,7 @@ export default function Showcase({
             <svg width="14" height="20" viewBox="0 0 14 20" fill="none" stroke="currentColor" strokeWidth="1.2">
               <rect x="1" y="1" width="12" height="18" rx="6" /><path d="M7 5v3" />
             </svg>
-            Drag to rotate
+            Swipe to browse · hover to zoom
           </div>
         )}
         {dashes && (

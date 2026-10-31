@@ -34,7 +34,6 @@ export default function App() {
         <Suspense fallback={null}>
         <Designer
           product={product}
-          onChangeProduct={(p) => { window.location.hash = p === 'hoodie' ? 'design-hoodie' : 'design-tshirt' }}
           onAddToBag={() => setCartCount(1)}
           onOrderPlaced={() => setCartCount(0)}
           step={step}

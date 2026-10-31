@@ -5,8 +5,9 @@ export * from '../catalog.js'
 export const VIEWS = [
   { id: 'front', label: 'Front', angle: 0 },
   { id: 'back', label: 'Back', angle: 180 },
-  { id: 'left', label: 'Left', angle: -40 },
-  { id: 'right', label: 'Right', angle: 40 },
+  // the side photos are true profile shots
+  { id: 'left', label: 'Left', angle: -90 },
+  { id: 'right', label: 'Right', angle: 90 },
 ]
 
 export const nearestEquivalent = (target, current) => target + 360 * Math.round((current - target) / 360)
@@ -26,8 +27,8 @@ export const isSquare = (angle) => gap(angle, 0) < 0.5 || gap(angle, 180) < 0.5
 const AUTOPLAY_DELAY = 4000 // ms on one shot before the showcase moves to the next
 
 /**
- * Drag horizontally to turn the shirt. Garment3D shows small turns as real tilt and plays a
- * flip transition when the angle crosses to the other side; on release it springs to a view.
+ * Drag horizontally to turn the garment through its four photos (front, right, back, left); the
+ * shot changes as the drag passes each quarter turn, a flick carries on, and release settles.
  * - settleFaces: always settle squarely on the front or back (design page, for editing prints)
  * - autoplay: every few seconds untouched, turn over to show the other side (review pages)
  */
@@ -45,7 +46,7 @@ export function useSpin({ settleFaces = false, autoplay = false } = {}) {
       if (performance.now() - lastTouch.current > AUTOPLAY_DELAY) {
         lastTouch.current = performance.now()
         // next shot round: front -> right -> back -> left -> front
-        const order = [0, 40, 180, 320]
+        const order = [0, 90, 180, 270]
         setAngleState((a) => {
           const here = order.reduce((b, v) => (gap(a, v) < gap(a, b) ? v : b), 0)
           const next = order[(order.indexOf(here) + 1) % order.length]
@@ -66,10 +67,10 @@ export function useSpin({ settleFaces = false, autoplay = false } = {}) {
     const move = (ev) => {
       touch()
       const dx = ev.clientX - startX, dy = ev.clientY - startY
-      if (!moved && Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) * 1.2) { moved = true; setDragging(true) }
-      if (moved) setAngleState(startAngle + dx * 0.35)
+      if (!moved && Math.abs(dx) > 4 && Math.abs(dx) > Math.abs(dy)) { moved = true; setDragging(true) }
+      if (moved) setAngleState(startAngle + dx * 0.4)
       const now = performance.now(), dt = Math.max(1, now - last.t)
-      velocity = velocity * 0.6 + (((ev.clientX - last.x) * 0.35) / dt) * 1000 * 0.4
+      velocity = velocity * 0.6 + (((ev.clientX - last.x) * 0.4) / dt) * 1000 * 0.4
       last = { x: ev.clientX, t: now }
     }
     const up = () => {
@@ -81,7 +82,7 @@ export function useSpin({ settleFaces = false, autoplay = false } = {}) {
       // momentum: carry on in the direction of the flick (a held finger has no momentum)
       const held = performance.now() - last.t > 80
       // a flick carries on to the next shot; then it settles on the nearest shot
-      const glide = moved && !held ? Math.max(-90, Math.min(90, velocity * 0.15)) : 0
+      const glide = moved && !held ? Math.max(-90, Math.min(90, velocity * 0.07)) : 0
       setAngleState((a) => {
         const end = a + glide
         if (settleFaces) return nearestEquivalent(gap(end, 0) <= gap(end, 180) ? 0 : 180, end)

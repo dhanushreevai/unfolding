@@ -204,7 +204,7 @@ const ICONS = {
 }
 const ALIGN = { center: { x: 50 }, top: { y: 18 }, middle: { y: 50 }, bottom: { y: 82 } }
 
-export default function Designer({ product, onChangeProduct, onAddToBag, onOrderPlaced, step, setStep }) {
+export default function Designer({ product, onAddToBag, onOrderPlaced, step, setStep }) {
   const p = PRODUCTS[product]
   const [colorIdx, setColorIdx] = useState(0)
   const [size, setSize] = useState('L')
@@ -249,7 +249,8 @@ export default function Designer({ product, onChangeProduct, onAddToBag, onOrder
   }, [selectedId])
 
   const goToView = (v) => { setAngle((a) => nearestEquivalent(v.angle, a)); setSelectedId(null) }
-  const stepView = (dir) => goToView(VIEWS[(VIEWS.indexOf(view) + dir + VIEWS.length) % VIEWS.length])
+  // arrows turn one quarter at a time, round the garment: front, right, back, left
+  const stepView = (dir) => { setAngle((a) => Math.round(a / 90) * 90 + dir * 90); setSelectedId(null) }
 
   // drag on empty stage space to spin the garment
   const onStageDown = (e) => { setSelectedId(null); spinDown(e) }
@@ -294,13 +295,12 @@ export default function Designer({ product, onChangeProduct, onAddToBag, onOrder
       {/* left: product, colour, size */}
       <aside className="options">
         <a className="back-link" href="#">← Change product</a>
+        {/* each garment has its own page: show only the one being designed */}
         <div className="product-cards">
-          {Object.entries(PRODUCTS).map(([key, prod]) => (
-            <button key={key} className={`product-card${key === product ? ' on' : ''}`} onClick={() => onChangeProduct(key)}>
-              <img src={prod.img} alt="" draggable="false" />
-              <span>{prod.name}</span>
-            </button>
-          ))}
+          <div className="product-card on">
+            <img src={p.img} alt="" draggable="false" />
+            <span>{p.name}</span>
+          </div>
         </div>
         <hr />
         <div className="label">Colour <em>{color.name}</em></div>
@@ -346,7 +346,7 @@ export default function Designer({ product, onChangeProduct, onAddToBag, onOrder
           <svg width="14" height="20" viewBox="0 0 14 20" fill="none" stroke="currentColor" strokeWidth="1.2">
             <rect x="1" y="1" width="12" height="18" rx="6" /><path d="M7 5v3" />
           </svg>
-          Swipe to browse<span className="hover-only"> · hover to zoom</span>
+          Drag to rotate<span className="hover-only"> · hover to zoom</span>
         </div>
         <div className="thumbs">
           {VIEWS.map((v, i) => (

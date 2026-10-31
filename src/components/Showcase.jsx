@@ -28,7 +28,8 @@ export default function Showcase({
   const { angle, setAngle, dragging, onPointerDown } = useSpin({ autoplay: true })
   const view = viewFromAngle(angle)
   const goToView = (v) => setAngle((a) => nearestEquivalent(v.angle, a))
-  const stepView = (dir) => goToView(VIEWS[(VIEWS.indexOf(view) + dir + VIEWS.length) % VIEWS.length])
+  // arrows turn one quarter at a time, round the garment: front, right, back, left
+  const stepView = (dir) => setAngle((a) => Math.round(a / 90) * 90 + dir * 90)
 
   return (
     <div className={`showcase-wrap thumbs-${thumbs}`}>
@@ -62,7 +63,7 @@ export default function Showcase({
             <svg width="14" height="20" viewBox="0 0 14 20" fill="none" stroke="currentColor" strokeWidth="1.2">
               <rect x="1" y="1" width="12" height="18" rx="6" /><path d="M7 5v3" />
             </svg>
-            Swipe to browse<span className="hover-only"> · hover to zoom</span>
+            Drag to rotate<span className="hover-only"> · hover to zoom</span>
           </div>
         )}
         {dashes && (

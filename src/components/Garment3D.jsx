@@ -394,6 +394,36 @@ function edgeBleed(photo, alpha, band = 14) {
   return out
 }
 
+// A garment draped by cloth simulation (public/models/<name>.bin, made by the garment tools in the
+// project notes). Front and back shells carry their own photo; layout described in export_model.py.
+async function loadDrapedModel(src) {
+  const name = src.split('/').pop().replace(/\.\w+$/, '')
+  const url = `/models/${name}.bin`
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const buf = await res.arrayBuffer()
+    const [vc, fc, bc] = new Uint32Array(buf, 0, 3)
+    let off = 12
+    const pos = new Float32Array(buf, off, vc * 3); off += vc * 12
+    const uv = new Float32Array(buf, off, vc * 2); off += vc * 8
+    const idx = new Uint32Array(buf, off, fc + bc)
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+    geo.setIndex(new THREE.BufferAttribute(idx, 1))
+    geo.addGroup(0, fc, 0)
+    geo.addGroup(fc, bc, 1)
+    geo.computeVertexNormals()
+    let low = Infinity
+    for (let i = 1; i < pos.length; i += 3) low = Math.min(low, pos[i])
+    geo.userData.hemY = low
+    return geo
+  } catch {
+    return null
+  }
+}
+
 const shapes = new Map()
 function loadShape(src) {
   if (!shapes.has(src)) {
@@ -401,7 +431,7 @@ function loadShape(src) {
     // a retouched copy of the photo with the front-only details removed (public/<name>-back.jpg)
     const backSrc = src.replace(/\.\w+$/, '-back.jpg')
     const back = loadImage(backSrc).catch(() => null)
-    shapes.set(src, Promise.all([loadImage(src), loadImage(maskSrc), back]).then(([img, maskImg, backImg]) => {
+    shapes.set(src, Promise.all([loadImage(src), loadImage(maskSrc), back, loadDrapedModel(src)]).then(([img, maskImg, backImg, draped]) => {
       const c = document.createElement('canvas')
       c.width = TEX_W; c.height = TEX_H
       const ctx = c.getContext('2d', { willReadFrequently: true })
@@ -428,7 +458,7 @@ function loadShape(src) {
         photo: frontPhoto, backPhoto, masks: maskCanvases(alpha),
         bumps: { front: bumpCanvas(photo, alpha, false), back: bumpCanvas(backPhoto, alpha, true) },
         shading: { front: shadingCanvas(photo, alpha, false), back: shadingCanvas(backPhoto, alpha, true) },
-        geometry: buildGeometry(keep, photo, rawBack), tinted: new Map(),
+        geometry: draped || buildGeometry(keep, photo, rawBack), tinted: new Map(),
       }
     }))
   }

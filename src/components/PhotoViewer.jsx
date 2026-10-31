@@ -1,14 +1,9 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { VIEWS, viewFromAngle } from './garment.js'
-
-// There are no side photos, so the side shots are rendered once from the front photo by the
-// 3D renderer (offscreen, loaded on demand) and then shown as still gallery shots.
-const Garment3D = lazy(() => import('./Garment3D.jsx'))
-const SIDE_ANGLES = [-40, 40]
 
 /*
   Product gallery in the style of big sportswear stores: still shots that crossfade.
-  Shots: front and back photos with the customer's print, and left/right side shots.
+  Shots: front and back photos with the customer's print, and real left/right side photos.
   Moving between shots crossfades; dragging slides the photo slightly; hovering a showcase
   zooms into the fabric under the pointer.
 */
@@ -17,8 +12,9 @@ const W = 820, H = 960 // shots are rendered at 2x the 410x480 stage
 const SHOTS = {
   front: { side: 'front' },
   back: { side: 'back' },
-  left: { rendered: 0 }, // index into SIDE_ANGLES
-  right: { rendered: 1 },
+  // real side photos: public/<name>-left.jpg and -right.jpg (prints sit on the front/back only)
+  left: { side: 'left' },
+  right: { side: 'right' },
 }
 
 const pct = (v) => parseFloat(v) / 100
@@ -92,8 +88,10 @@ function drawLayers(ctx, layers, rect, images) {
 // One side of the garment: photo, colour, print and cut-out, as a canvas.
 async function paintSide(product, color, layers, side) {
   const back = side === 'back'
-  const photoUrl = back ? product.img.replace(/\.\w+$/, '-back.jpg') : product.img
-  const [photo, mask] = await Promise.all([loadImage(photoUrl), maskCanvas(product.img.replace(/\.\w+$/, '-mask.png'))])
+  const base = product.img.replace(/\.\w+$/, '')
+  const own = side === 'left' || side === 'right' ? `-${side}` : ''
+  const photoUrl = back ? `${base}-back.jpg` : own ? `${base}${own}.jpg` : product.img
+  const [photo, mask] = await Promise.all([loadImage(photoUrl), maskCanvas(`${base}${own}-mask.png`)])
   const c = document.createElement('canvas')
   c.width = W; c.height = H
   const ctx = c.getContext('2d')
@@ -154,48 +152,102 @@ export default function PhotoViewer({
   product, color, layers, angle, immediate = false, showcase = false,
   onSettle, onThumbs, thumbAngles, onPrintRect, onZoom,
 }) {
-  const [sides, setSides] = useState({ front: null, back: null })
-  const [sideShots, setSideShots] = useState([null, null])
-  const [renderSides, setRenderSides] = useState(false)
-  const flat = useRef(null) // { front, back } canvases, for thumbnails
+  const [sides, setSides] = useState({})
+  const flat = useRef(null) // painted canvases per side, for thumbnails
   const [hover, setHover] = useState(null)
   const hostRef = useRef(null)
   const view = viewFromAngle(angle)
-  const shotView = VIEWS.find((v) => v.id === view.id)
-  // how far the current drag has pulled away from the shot, for a gentle slide
-  const pull = Math.max(-1, Math.min(1, ((((angle - shotView.angle + 180) % 360) + 360) % 360 - 180) / 40))
+
+  // The shown angle eases towards the requested one every frame: closely while dragging, and as a
+  // smooth turn (passing through the in-between photos) when a view button is pressed.
+  const [shown, setShown] = useState(angle)
+  const live = useRef({ angle, immediate })
+  live.current = { angle, immediate }
+  useEffect(() => {
+    let raf, last = performance.now(), cur = shown
+    let tween = null // { from, to, start, dur } for button / release turns
+    const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2)
+    const frame = (now) => {
+      const dt = Math.min(0.05, (now - last) / 1000)
+      last = now
+      const { angle: target, immediate: imm } = live.current
+      if (imm) {
+        // dragging: follow the finger smoothly
+        tween = null
+        cur += (target - cur) * (1 - Math.exp(-dt * 22))
+        setShown(cur)
+      } else if (Math.abs(target - cur) > 0.05 || tween) {
+        // a turn to a view: start gently, speed up, slow into place (about 1.7s per quarter turn)
+        if (!tween || tween.to !== target) {
+          const dist = Math.abs(target - cur)
+          tween = { from: cur, to: target, start: now, dur: 800 + dist * 10 }
+        }
+        const k = Math.min(1, (now - tween.start) / tween.dur)
+        cur = tween.from + (tween.to - tween.from) * easeInOut(k)
+        if (k >= 1) { cur = tween.to; tween = null }
+        setShown(cur)
+      }
+      raf = requestAnimationFrame(frame)
+    }
+    raf = requestAnimationFrame(frame)
+    return () => cancelAnimationFrame(raf)
+  }, [])
+
+  // which two photos are on screen and how far between them: front 0, right 90, back 180, left 270
+  const ORDER = ['front', 'right', 'back', 'left']
+  const a = ((shown % 360) + 360) % 360
+  const qi = Math.floor(a / 90) % 4
+  const t = a / 90 - Math.floor(a / 90)
+  const from = ORDER[qi], to = ORDER[(qi + 1) % 4]
+  const smooth = (e0, e1, x) => { const k = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return k * k * (3 - 2 * k) }
+  const mix = smooth(0.18, 0.82, t)
+  const shotStyle = (id) => {
+    let k, opacity
+    if (id === from) { k = t; opacity = 1 - mix } else if (id === to) { k = t - 1; opacity = mix } else return { opacity: 0 }
+    // turning: rotate away in perspective, drift sideways, and fall into shade as it turns edge-on
+    const turn = Math.sin(Math.abs(k) * Math.PI / 2)
+    return {
+      opacity,
+      zIndex: opacity > 0.5 ? 2 : 1,
+      transform: `translateX(${(k * 14).toFixed(2)}%) rotateY(${(k * 55).toFixed(2)}deg) scale(${(1 - 0.05 * turn).toFixed(4)})`,
+      filter: `brightness(${(1 - 0.45 * turn).toFixed(3)})`,
+    }
+  }
 
   useEffect(() => { onPrintRect?.(product.print) }, [product.print])
 
-  // render both sides whenever the product, colour or design changes
+  // paint every shot whenever the product, colour or design changes
+  const paintedFor = useRef(null)
   useEffect(() => {
     let on = true
-    Promise.all([paintSide(product, color, layers, 'front'), paintSide(product, color, layers, 'back')]).then(([front, back]) => {
+    // switching garment: drop the old garment's shots at once so it never shows under the new name
+    if (paintedFor.current !== product.img) {
+      paintedFor.current = product.img
+      flat.current = null
+      setSides({})
+    }
+    const names = ['front', 'back', 'left', 'right']
+    Promise.all(names.map((n) => paintSide(product, color, layers, n))).then((canvases) => {
       if (!on) return
-      flat.current = { front, back }
-      setSides({ front: front.toDataURL('image/png'), back: back.toDataURL('image/png') })
+      flat.current = Object.fromEntries(names.map((n, i) => [n, canvases[i]]))
+      setSides(Object.fromEntries(names.map((n, i) => [n, canvases[i].toDataURL('image/png')])))
     })
-    // re-render the side shots once the design has stopped changing for a moment
-    const id = setTimeout(() => setRenderSides(true), 500)
-    return () => { on = false; clearTimeout(id) }
+    return () => { on = false }
   }, [product.img, color, layers])
 
-  // thumbnails once the photos (and side shots, when ready) are in
+  // thumbnails once the shots are painted
   useEffect(() => {
-    if (!onThumbs || !thumbAngles || !flat.current) return
+    if (!onThumbs || !thumbAngles) return
+    if (!flat.current) { onThumbs([]); return }
     onThumbs(thumbAngles.map((a) => {
       const shot = SHOTS[viewFromAngle(a).id]
-      if (shot.rendered !== undefined) return sideShots[shot.rendered] || ''
-      return thumbOf(shot.side === 'back' ? flat.current.back : flat.current.front, zoomOf(shot, product))
+      return thumbOf(flat.current[shot.side], zoomOf(shot, product))
     }))
-  }, [sides, sideShots, thumbAngles?.join()])
+  }, [sides, thumbAngles?.join()])
 
-  // tell the page when a shot has finished fading in (prints are edited only then)
-  useEffect(() => {
-    onSettle?.(false)
-    const id = setTimeout(() => onSettle?.(true), 450)
-    return () => clearTimeout(id)
-  }, [view.id])
+  // tell the page when the garment has stopped turning (the print box is shown only then)
+  const atRest = !immediate && Math.abs(shown - angle) < 0.5
+  useEffect(() => { onSettle?.(atRest) }, [atRest])
 
   useEffect(() => { onZoom?.(!!hover && !immediate) }, [!!hover && !immediate])
 
@@ -210,31 +262,23 @@ export default function PhotoViewer({
       onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
       {VIEWS.map((v) => {
         const shot = SHOTS[v.id]
-        const src = shot.rendered !== undefined ? sideShots[shot.rendered] : sides[shot.side]
+        const src = sides[shot.side]
         const active = v.id === view.id
+        const resting = Math.abs(shown - angle) < 1 && !immediate
         const zoom = zoomOf(shot, product)
         let transform = zoom ? `scale(${zoom.scale})` : 'scale(1)'
         let origin = zoom ? `${zoom.x * 100}% ${zoom.y * 100}%` : '50% 50%'
-        if (active && hover && !immediate) {
+        if (active && hover && resting) {
           // hover zoom: magnify under the pointer
           transform = `scale(${(zoom ? zoom.scale : 1) * 1.7})`
           origin = `${hover.x * 100}% ${hover.y * 100}%`
         }
         return (
-          <div key={v.id} className={`shot${active ? ' on' : ''}`}
-            style={{ transform: active && immediate ? `translateX(${(pull * 6).toFixed(2)}%)` : undefined }}>
+          <div key={v.id} className={`shot${active ? ' on' : ''}`} style={shotStyle(shot.side)}>
             {src && <img src={src} alt="" draggable="false" style={{ transform, transformOrigin: origin }} />}
           </div>
         )
       })}
-      {renderSides && (
-        <div className="side-renderer" aria-hidden="true">
-          <Suspense fallback={null}>
-            <Garment3D product={product} color={color} layers={layers} angle={0} fullSnapshots
-              thumbAngles={SIDE_ANGLES} onThumbs={(urls) => { setSideShots(urls); setRenderSides(false) }} />
-          </Suspense>
-        </div>
-      )}
     </div>
   )
 }

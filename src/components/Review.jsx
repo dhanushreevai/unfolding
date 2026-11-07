@@ -14,12 +14,12 @@ export function OrderSpecs({ product, color, size, layers, price, extra = null }
   )
 }
 
-export default function Review({ productKey, product, color, size, layers, previews, onPreviews, onEdit, onBuy }) {
+export default function Review({ productKey, product, design, color, size, layers, previews, onPreviews, onEdit, onBuy }) {
   const { subtotal } = priceOrder({ product: productKey, layers, delivery: 'standard' })
 
   return (
     <div className="review">
-      <Showcase product={product} color={color} layers={layers} thumbs="side" dashes
+      <Showcase design={design} thumbs="side" dashes
         thumbUrls={previews} onThumbs={onPreviews}
         top={<button className="back-link" onClick={onEdit}>← Edit design</button>} />
 

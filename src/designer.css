@@ -416,3 +416,9 @@ button.back-link { background: none; border: 0; cursor: pointer; padding: 0; tex
 /* touch screens can't hover, so the zoom hint is only shown where a mouse can use it */
 @media (hover: none) { .hover-only { display: none; } }
 .product-cards div.product-card { cursor: default; }
+
+/* ---------- design studio (src/studio): its own isolated look, placed under the site header ---------- */
+.studio-host { display: block; margin: -20px -44px -50px; }
+@media (max-width: 760px) { .studio-host { margin: -10px -16px -40px; } }
+/* the read-only studio garment on review / checkout / confirmation */
+.studio-stage .studio-host-view { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; }

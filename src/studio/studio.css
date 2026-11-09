@@ -128,12 +128,14 @@ img { display: block; }
 .swap { position: relative; width: 100%; }
 .swap-live { position: relative; will-change: transform, opacity; }
 .swap-live.hide { visibility: hidden; }
-.turn-out { position: absolute; inset: 0; pointer-events: none; will-change: transform, opacity; animation: turn-out 0.42s cubic-bezier(0.4, 0, 0.2, 1) both; }
-.turn-in-a { animation: turn-in-a 0.48s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-.turn-in-b { animation: turn-in-b 0.48s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-@keyframes turn-out { to { opacity: 0; transform: translateX(calc(var(--dir) * -16%)) scaleX(0.22); } }
-@keyframes turn-in-a { from { opacity: 0; transform: translateX(calc(var(--dir) * 16%)) scaleX(0.22); } }
-@keyframes turn-in-b { from { opacity: 0; transform: translateX(calc(var(--dir) * 16%)) scaleX(0.22); } }
+/* changing shot: a soft photographic crossfade with a slight drift in the turning direction,
+   like a product gallery (no squash or flip, which reads as a game) */
+.turn-out { position: absolute; inset: 0; pointer-events: none; will-change: transform, opacity; animation: turn-out 0.55s ease both; }
+.turn-in-a { animation: turn-in-a 0.65s cubic-bezier(0.25, 0.6, 0.3, 1) both; }
+.turn-in-b { animation: turn-in-b 0.65s cubic-bezier(0.25, 0.6, 0.3, 1) both; }
+@keyframes turn-out { to { opacity: 0; transform: translateX(calc(var(--dir) * -2.5%)); } }
+@keyframes turn-in-a { from { opacity: 0; transform: translateX(calc(var(--dir) * 2.5%)); } }
+@keyframes turn-in-b { from { opacity: 0; transform: translateX(calc(var(--dir) * 2.5%)); } }
 
 /* accordion fold for a new colour or garment */
 .fold-layer { position: absolute; inset: 0; pointer-events: none; }
@@ -379,3 +381,9 @@ h2.piece-name { border: none; }
 /* prices here show pence ("£29.00"), so the price line is a touch smaller than the original */
 .price-line strong { font-size: 32px; white-space: nowrap; }
 .price-line .small { text-align: right; min-width: 0; }
+
+/* the garment outline is applied once to the whole recoloured photo (see Stage.jsx) */
+.photo { -webkit-mask-size: 100% 100%; mask-size: 100% 100%; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
+
+/* the recoloured garment photo (recolour.js) */
+.photo .dyed { position: absolute; inset: 0; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }

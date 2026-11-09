@@ -1,5 +1,6 @@
 import { GARMENTS } from './garments.js'
-import { CLIPART, fontOf, isDark } from './options.jsx'
+import { CLIPART, fontOf } from './options.jsx'
+import { recolourCanvas } from './recolour.js'
 
 /*
   Draws a studio design to a PNG (data URL), for view thumbnails and the order previews.
@@ -20,22 +21,11 @@ const load = (src) => {
   return images.get(src)
 }
 
+// the same dyed-fabric recolour as the live view, scaled to the picture size
 function tinted(img, color, w, h) {
   const c = document.createElement('canvas')
   c.width = w; c.height = h
-  const ctx = c.getContext('2d')
-  ctx.drawImage(img, 0, 0, w, h)
-  ctx.globalCompositeOperation = 'multiply'
-  ctx.fillStyle = color
-  ctx.fillRect(0, 0, w, h)
-  ctx.globalCompositeOperation = 'destination-in'
-  ctx.drawImage(img, 0, 0, w, h)
-  if (isDark(color)) {
-    // the light sheen the live view adds on dark colours
-    ctx.globalCompositeOperation = 'screen'
-    ctx.globalAlpha = 0.13
-    ctx.drawImage(img, 0, 0, w, h)
-  }
+  c.getContext('2d').drawImage(recolourCanvas(img, color), 0, 0, w, h)
   return c
 }
 

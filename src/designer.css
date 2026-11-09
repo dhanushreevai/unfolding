@@ -422,3 +422,12 @@ button.back-link { background: none; border: 0; cursor: pointer; padding: 0; tex
 @media (max-width: 760px) { .studio-host { margin: -10px -16px -40px; } }
 /* the read-only studio garment on review / checkout / confirmation */
 .studio-stage .studio-host-view { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; }
+/* review / checkout preview: the garment sits a little smaller under a soft studio light,
+   so it has breathing room and dark colours still read against the black page */
+.studio-stage::before {
+  content: ""; position: absolute; inset: -4% -8%; z-index: 0; pointer-events: none;
+  background: radial-gradient(closest-side, rgba(255,255,255,.085), rgba(255,255,255,.03) 55%, transparent);
+}
+.studio-stage .studio-host-view { inset: 5% 8% 8%; }
+.view-card img { background: radial-gradient(closest-side, rgba(255,255,255,.09), transparent); }
+.order-thumb img { background: radial-gradient(closest-side, rgba(255,255,255,.09), transparent); }

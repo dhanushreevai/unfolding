@@ -1,38 +1,36 @@
-import { memo, useId, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { GARMENTS } from "./garments.js";
-import { ClipartSvg, fontOf, isDark } from "./options.jsx";
+import { ClipartSvg, fontOf } from "./options.jsx";
+import { recolouredUrl } from "./recolour.js";
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 /*
-  Real garment photo recoloured in the browser:
-  the cut-out photo is a light "shade map"; a colour layer is multiplied over it,
-  clipped to the garment's shape, so folds and fabric texture stay real.
+  Real garment photo recoloured like dyed fabric (see recolour.js): one finished image per
+  photo and colour, so folds and fabric texture keep their real contrast in every colour.
 */
-function Tint({ src, color }) {
-  const dark = isDark(color);
-  return (
-    <>
-      <span className="tint" style={{ background: color, WebkitMaskImage: `url(${src})`, maskImage: `url(${src})` }} />
-      {dark && <img className="sheen" src={src} alt="" draggable={false} />}
-    </>
-  );
+function useRecoloured(src, color) {
+  const key = `${src}|${color}`;
+  const [img, setImg] = useState({ key: null, url: null });
+  useEffect(() => {
+    let on = true;
+    recolouredUrl(src, color).then(url => on && setImg({ key, url }));
+    return () => { on = false; };
+  }, [key]);
+  // until the new colour is ready, keep showing the previous one (no flash of the grey photo)
+  return img.url;
 }
 
-export function PhotoGarment({ product, view, color, unfold = false }) {
+function Dyed({ src, color, alt = "" }) {
+  const url = useRecoloured(src, color);
+  return url ? <img className="dyed" src={url} alt={alt} draggable={false} /> : null;
+}
+
+export function PhotoGarment({ product, view, color }) {
   const src = GARMENTS[product].views[view].src;
-  const [shown, setShown] = useState(color);
-  const base = unfold ? shown : color;
   return (
     <div className="photo">
-      <img className="shade" src={src} alt={`${GARMENTS[product].name} ${view}`} draggable={false} />
-      <Tint src={src} color={base} />
-      {unfold && color !== shown && (
-        <div className="unfold-layer" key={color} onAnimationEnd={() => setShown(color)}>
-          <img className="shade" src={src} alt="" draggable={false} />
-          <Tint src={src} color={color} />
-        </div>
-      )}
+      <Dyed src={src} color={color} alt={`${GARMENTS[product].name} ${view}`} />
     </div>
   );
 }
@@ -107,7 +105,7 @@ const layerWidth = l => (l.kind === "text" ? "auto" : `${(l.kind === "image" ? 7
   Garment + the customer's design.
   editable -> drag to move, corners to resize, top dot to rotate.
 */
-function Stage({ product, view, color, layers = [], editable = false, unfold = false, lite = false, selected, onSelect, onChange, onEmptyClick, className = "" }) {
+function Stage({ product, view, color, layers = [], editable = false, lite = false, selected, onSelect, onChange, onEmptyClick, className = "" }) {
   const areaRef = useRef(null);
   const fid = "ink" + useId().replace(/[^a-zA-Z0-9]/g, "");
   const g = GARMENTS[product];
@@ -155,7 +153,7 @@ function Stage({ product, view, color, layers = [], editable = false, unfold = f
       style={{ aspectRatio: g.ratio }}
       onPointerDown={() => editable && onSelect(null)}
     >
-      <PhotoGarment product={product} view={view} color={color} unfold={unfold} />
+      <PhotoGarment product={product} view={view} color={color} />
       {print && (
         <div
           className={`print-area ${layers.length ? "" : "empty"} ${selected && layers.some(l => l.id === selected) ? "active" : ""}`}
@@ -210,8 +208,7 @@ function Stage({ product, view, color, layers = [], editable = false, unfold = f
       {/* parts of the garment that sit on top of the print (drawstrings) */}
       {print && layers.length > 0 && g.views[view].over && (
         <div className="photo over">
-          <img className="shade" src={g.views[view].over} alt="" draggable={false} />
-          <Tint src={g.views[view].over} color={color} />
+          <Dyed src={g.views[view].over} color={color} />
         </div>
       )}
     </div>

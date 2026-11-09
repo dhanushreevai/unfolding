@@ -52,10 +52,8 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
   const [text, setText] = useState({ text: "", font: "Anton" });
   const [spinning, setSpinning] = useState(false);
   const wrapRef = useRef(null);
-  // gentle 3D tilt toward the cursor (set straight on the element: no re-render, stays smooth)
-  const setTilt = (x, y) => {
-    if (wrapRef.current) wrapRef.current.style.transform = `perspective(1400px) rotateX(${x}deg) rotateY(${y}deg)`;
-  };
+  // (switched off: tilting a flat photo in 3D skews it and makes it look rendered, not real)
+  const setTilt = () => {};
   const fileRef = useRef(null);
   const turnRef = useRef(null);
   const lastLook = useRef({ product: design.product, color: design.color, view: "front" });
@@ -226,8 +224,8 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
         <div className="garment-wrap" ref={wrapRef}>
           <FoldSwap
             k={foldKey}
-            mode={onlyTurned ? "turn" : "fold"}
-            dir={turnDir}
+            mode="turn"
+            dir={onlyTurned ? turnDir : 0} /* new colour: a plain crossfade, no paper fold */
             state={{ product: design.product, view, color: design.color, layers: design.layers[view] || [] }}
             still={still}
             live={

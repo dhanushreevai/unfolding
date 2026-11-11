@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Stage from "./Stage.jsx";
 import FoldSwap from "./FoldSwap.jsx";
+import ChatGptPanel from "./ChatGptPanel.jsx";
 import { BACK_PRINT_PRICE, GARMENTS, VIEWS, VIEW_LABEL, priceOf } from "./garments.js";
 import { CLIPART, COLOURS, ClipartSvg, FONTS, INKS, SIZES, colourName, fontOf, isDark } from "./options.jsx";
 import { formatPrice } from "../catalog.js";
@@ -34,6 +35,7 @@ export function readImage(file) {
 
 const I = {
   upload: <path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />,
+  chatgpt: <path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z" />,
   text: <path d="M5 6V4h14v2M12 4v16M9 20h6" />,
   graphics: <path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z" />,
   layers: <path d="M12 3 2 8l10 5 10-5-10-5zM2 13l10 5 10-5M2 17.5l10 5 10-5" />,
@@ -41,13 +43,13 @@ const I = {
 const Icon = ({ d, s = 20 }) => (
   <svg viewBox="0 0 24 24" width={s} height={s} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{d}</svg>
 );
-const TOOLS = [["upload", "Upload"], ["text", "Text"], ["graphics", "Graphics"], ["layers", "Layers"]];
+const TOOLS = [["chatgpt", "ChatGPT"], ["upload", "Upload"], ["text", "Text"], ["graphics", "Graphics"], ["layers", "Layers"]];
 const layerLabel = l => (l.kind === "text" ? `“${l.text.replace(/\n/g, " ")}”` : l.kind === "image" ? "Your image" : l.clip[0].toUpperCase() + l.clip.slice(1));
 
 // The design studio. The garment (T-shirt or hoodie) is chosen by the page; Continue goes to review.
-export default function Editor({ design, setDesign, size, setSize, onContinue, onMessage, message }) {
+export default function Editor({ design, setDesign, size, setSize, onContinue, onMessage, message, onSave, saveLabel }) {
   const [view, setView] = useState("front");
-  const [tool, setTool] = useState("upload");
+  const [tool, setTool] = useState("chatgpt");
   const [selected, setSelected] = useState(null);
   const [text, setText] = useState({ text: "", font: "Anton" });
   const [spinning, setSpinning] = useState(false);
@@ -118,6 +120,33 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [design, view]);
+
+  // paste an image from the clipboard (e.g. copied from ChatGPT): Ctrl+V anywhere on the page
+  useEffect(() => {
+    const paste = e => {
+      const target = e.composedPath?.()[0] || e.target;
+      if (target.closest?.("input, textarea")) return;
+      const file = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith("image/"));
+      if (file) { e.preventDefault(); upload(file); }
+    };
+    window.addEventListener("paste", paste);
+    return () => window.removeEventListener("paste", paste);
+  }, [upload]);
+  const pasteSupported = !!navigator.clipboard?.read;
+  const pasteFromButton = async () => {
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find(t => t.startsWith("image/"));
+        if (type) {
+          const blob = await item.getType(type);
+          return upload(new File([blob], "pasted.png", { type }));
+        }
+      }
+      onMessage("No image copied yet. In ChatGPT: right-click the image → Copy image.");
+    } catch {
+      onMessage("Paste was blocked. Press Ctrl+V instead, or save the image and use Upload.");
+    }
+  };
 
   // drop an image anywhere on the page
   useEffect(() => {
@@ -280,6 +309,12 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
       {tool && (
         <section className="panel" key={tool}>
           <button className="panel-x" onClick={() => setTool(null)} aria-label="Close panel">×</button>
+          {tool === "chatgpt" && (
+            <>
+              <h3>Create with ChatGPT</h3>
+              <ChatGptPanel garment={g.name} onPaste={pasteFromButton} pasteSupported={pasteSupported} />
+            </>
+          )}
           {tool === "upload" && (
             <>
               <h3>Your artwork</h3>
@@ -420,6 +455,11 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
           <span>{allCount === 0 ? "Add a design first" : "Continue"}</span>
           <span className="plus" aria-hidden="true">→</span>
         </button>
+        {onSave && (
+          <button className="btn ghost save-btn" disabled={allCount === 0} onClick={() => { setSelected(null); onSave(); }}>
+            <span>{saveLabel || "Save to my designs"}</span>
+          </button>
+        )}
       </aside>
     </div>
   );

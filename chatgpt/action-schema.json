@@ -1,0 +1,57 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Unfolding People Designer",
+    "description": "Sends a design image made in this conversation to Unfolding People and returns a link that opens it on a T-shirt or hoodie, ready to order.",
+    "version": "1.0.0"
+  },
+  "servers": [{ "url": "https://www.unfoldingpeople.com" }],
+  "paths": {
+    "/api/gpt-design": {
+      "post": {
+        "operationId": "sendDesignToShirt",
+        "summary": "Put the design image on a T-shirt or hoodie",
+        "description": "Call this after generating the final design image. Attach exactly that one image in openaiFileIdRefs.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["openaiFileIdRefs"],
+                "properties": {
+                  "openaiFileIdRefs": {
+                    "type": "array",
+                    "description": "Exactly one image: the final design image generated in this conversation (PNG with a transparent background preferred).",
+                    "items": { "type": "string" }
+                  },
+                  "garment": {
+                    "type": "string",
+                    "enum": ["tshirt", "hoodie"],
+                    "description": "Which garment the customer wants. Use tshirt if they did not say."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The design was received",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "link": { "type": "string", "description": "Link that opens the design studio with the design on the garment" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

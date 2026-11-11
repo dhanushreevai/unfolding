@@ -1,3 +1,5 @@
+import AccountButton from './Account.jsx'
+
 const STEPS = ['Design', 'Review', 'Details', 'Payment']
 
 export default function Header({ cartCount = 0, step, secure = false }) {
@@ -22,6 +24,7 @@ export default function Header({ cartCount = 0, step, secure = false }) {
         </div>
       ) : (
       <div className="nav-right">
+        <AccountButton />
         <button className="bag" aria-label="Bag">
           <svg width="20" height="22" viewBox="0 0 20 22" fill="none" stroke="#fff" strokeWidth="1.5">
             <path d="M2 6h16l-1 14H3L2 6z" />

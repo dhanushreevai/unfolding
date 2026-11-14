@@ -1,8 +1,10 @@
 import { put } from '@vercel/blob'
-import { COUNTRIES, DELIVERY, PAYMENT_METHODS, PRODUCTS, SIZES, priceOrder } from '../src/catalog.js'
+import { sendOrderEmails } from './_mail.js'
+import { COUNTRIES, DELIVERY, PAYMENT_METHODS, PRODUCTS, SIZES, deliveryFor, priceOrder } from '../src/catalog.js'
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const MAX_PREVIEW_BYTES = 1.5 * 1024 * 1024
+const MAX_TEXT = 60 // same limit as the text box in the studio (src/studio/Editor.jsx)
 
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 const num = (v, min, max) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : null)
@@ -42,7 +44,7 @@ function readLayers(layers) {
     }
     if (Object.values(base).includes(null)) return null
     if (l.type === 'text') {
-      const text = str(l.text, 40)
+      const text = str(l.text, MAX_TEXT)
       if (!text) return null
       out.push({ ...base, type: 'text', text, font: str(l.font, 30), color: str(l.color, 9) })
     } else if (l.type === 'clip') {
@@ -97,7 +99,7 @@ export async function POST(request) {
   if (!PAYMENT_METHODS[body.paymentMethod]) errors.push('paymentMethod')
   if (errors.length) return Response.json({ error: 'Please check your details', fields: errors }, { status: 422 })
 
-  const totals = priceOrder({ product: body.product, layers, delivery: body.delivery })
+  const totals = priceOrder({ product: body.product, layers, delivery: body.delivery, country: customer.country })
   const createdAt = new Date().toISOString()
 
   // pick an id that isn't taken (Blob refuses to overwrite an existing pathname)
@@ -109,7 +111,7 @@ export async function POST(request) {
       status: 'awaiting_payment',
       payment: { method: body.paymentMethod, status: 'unpaid' },
       customer,
-      delivery: { option: body.delivery, ...DELIVERY[body.delivery] },
+      delivery: { option: body.delivery, ...deliveryFor(body.delivery, customer.country) },
       item: {
         product: body.product, productName: product.name, color: color.name, size: body.size,
         fabric: product.fabric, layers,
@@ -140,6 +142,9 @@ export async function POST(request) {
     } catch (err) {
       console.error('preview save failed', id, err)
     }
+
+    // tell the shop (and the customer) by email; a failed email never fails the order
+    await sendOrderEmails(order, body.previews || {})
 
     return Response.json({ id, createdAt, totals }, { status: 201 })
   }

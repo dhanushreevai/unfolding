@@ -58,7 +58,7 @@ export default function Designer({ product, onAddToBag, onOrderPlaced, step, set
           r.onerror = reject
           r.readAsDataURL(blob)
         })
-        const layer = { id: `gpt${Date.now()}`, kind: 'image', src, x: 50, y: 45, scale: 90, rotate: 0 }
+        const layer = { id: `gpt${Date.now()}`, kind: 'image', src, x: 50, y: 50, scale: 90, rotate: 0 }
         setDesign((d) => ({ ...d, layers: { ...d.layers, front: [...d.layers.front, layer] } }))
         setStep(1)
         setMessage((m) => ({ text: 'Your ChatGPT design is on the front. Drag it, pull a corner to resize.', k: m.k + 1 }))

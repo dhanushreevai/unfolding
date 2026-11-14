@@ -9,6 +9,79 @@ import { formatPrice } from "../catalog.js";
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 // Read an uploaded image, shrink big photos, keep PNG transparency
+// the box around the visible (non-transparent) pixels of an image, with a small margin
+function opaqueBounds(img) {
+  const full = { x: 0, y: 0, w: img.width, h: img.height };
+  const k = Math.min(1, 600 / Math.max(img.width, img.height)); // scan a small copy, it's quick
+  const w = Math.max(1, Math.round(img.width * k)), h = Math.max(1, Math.round(img.height * k));
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h).data;
+  // count clearly visible pixels per row and column; faint haze, soft glows and stray specks
+  // (common in AI images) must not count, or the art ends up off-centre in a too-big box
+  const rows = new Uint32Array(h), cols = new Uint32Array(w);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (d[(y * w + x) * 4 + 3] > 64) { rows[y]++; cols[x]++; }
+    }
+  }
+  const minRow = Math.max(2, Math.round(w * 0.012)), minCol = Math.max(2, Math.round(h * 0.012));
+  let y0 = 0, y1 = h - 1, x0 = 0, x1 = w - 1;
+  while (y0 < h && rows[y0] < minRow) y0++;
+  while (y1 > y0 && rows[y1] < minRow) y1--;
+  while (x0 < w && cols[x0] < minCol) x0++;
+  while (x1 > x0 && cols[x1] < minCol) x1--;
+  if (y0 >= h || x0 >= w) return full; // nothing clearly visible: leave it alone
+  const pad = 2;
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad);
+  x1 = Math.min(w - 1, x1 + pad); y1 = Math.min(h - 1, y1 + pad);
+  const box = { x: x0 / k, y: y0 / k, w: (x1 - x0 + 1) / k, h: (y1 - y0 + 1) / k };
+  box.w = Math.min(box.w, img.width - box.x); box.h = Math.min(box.h, img.height - box.y);
+  return box;
+}
+
+// clears a faint see-through haze (barely visible pixels), which would show as a pale box
+// on the garment; only touches images that actually have transparency
+function clearHaze(cv) {
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  const id = ctx.getImageData(0, 0, cv.width, cv.height);
+  const d = id.data;
+  let see = false;
+  for (let i = 3; i < d.length; i += 4) if (d[i] < 250) { see = true; break; }
+  if (!see) return cv;
+  for (let i = 3; i < d.length; i += 4) {
+    const a = d[i];
+    d[i] = a < 40 ? 0 : a < 80 ? Math.round(((a - 40) / 40) * 80) : a; // fade out the haze smoothly
+  }
+  ctx.putImageData(id, 0, 0);
+  return cv;
+}
+
+// trims the see-through border of an image that is already a data URL (designs saved before
+// trimming existed); resolves to the same src if there is nothing to trim
+function trimSrc(src) {
+  return new Promise(resolve => {
+    if (!src || src.startsWith("data:image/svg")) return resolve(src);
+    const img = new Image();
+    img.onload = () => {
+      const b = opaqueBounds(img);
+      if (b.w >= img.width - 2 && b.h >= img.height - 2) return resolve(src);
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(b.w));
+      cv.height = Math.max(1, Math.round(b.h));
+      cv.getContext("2d").drawImage(img, b.x, b.y, b.w, b.h, 0, 0, cv.width, cv.height);
+      resolve(clearHaze(cv).toDataURL("image/png"));
+    };
+    img.onerror = () => resolve(src);
+    img.src = src;
+  });
+}
+
+// longest text a customer can print (the order server keeps the same limit)
+export const MAX_TEXT = 60;
+
 export function readImage(file) {
   return new Promise((resolve, reject) => {
     if (!file || !file.type.startsWith("image/")) return reject(new Error("That's not an image file."));
@@ -19,12 +92,15 @@ export function readImage(file) {
       if (file.type === "image/svg+xml") return resolve(reader.result);
       const img = new Image();
       img.onload = () => {
-        const s = Math.min(1, 1400 / Math.max(img.width, img.height));
+        // trim see-through margins (ChatGPT art often sits off-centre in a big transparent
+        // canvas), so the artwork itself lands in the middle of the print area at a useful size
+        const b = opaqueBounds(img);
+        const s = Math.min(1, 1400 / Math.max(b.w, b.h));
         const cv = document.createElement("canvas");
-        cv.width = Math.round(img.width * s);
-        cv.height = Math.round(img.height * s);
-        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
-        resolve(file.type === "image/jpeg" ? cv.toDataURL("image/jpeg", 0.9) : cv.toDataURL("image/png"));
+        cv.width = Math.max(1, Math.round(b.w * s));
+        cv.height = Math.max(1, Math.round(b.h * s));
+        cv.getContext("2d").drawImage(img, b.x, b.y, b.w, b.h, 0, 0, cv.width, cv.height);
+        resolve(file.type === "image/jpeg" ? cv.toDataURL("image/jpeg", 0.9) : clearHaze(cv).toDataURL("image/png"));
       };
       img.onerror = () => reject(new Error("Could not open that image."));
       img.src = reader.result;
@@ -91,6 +167,24 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
   const step = d => go(VIEWS[(VIEWS.indexOf(view) + d + 4) % 4]);
 
   const setLayers = useCallback((s, fn) => setDesign(d => ({ ...d, layers: { ...d.layers, [s]: fn(d.layers[s]) } })), [setDesign]);
+
+  // images added before trimming existed (saved in the browser or an account) still carry their
+  // empty border, which leaves the art off to one side: trim them once, keeping their place
+  useEffect(() => {
+    const todo = Object.entries(design.layers).flatMap(([s, ls]) => ls.filter(l => l.kind === "image" && !l.trimmed).map(l => [s, l]));
+    if (!todo.length) return;
+    let on = true;
+    Promise.all(todo.map(([s, l]) => trimSrc(l.src).then(src => [s, l.id, src]))).then(done => {
+      if (!on) return;
+      setDesign(d => {
+        const layers = { ...d.layers };
+        for (const [s, id, src] of done) layers[s] = layers[s].map(l => (l.id === id ? { ...l, src, trimmed: true } : l));
+        return { ...d, layers };
+      });
+    });
+    return () => { on = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [design.layers]);
   const update = useCallback((id, patch) => setLayers(view, ls => ls.map(l => (l.id === id ? { ...l, ...patch } : l))), [setLayers, view]);
   const remove = id => {
     setLayers(view, ls => ls.filter(l => l.id !== id));
@@ -99,7 +193,7 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
   const add = l => {
     if (!printable) go("front");
     const count = design.layers[side].length;
-    const nl = { id: uid(), x: 50, y: count ? [30, 62, 46, 78, 20][(count - 1) % 5] : 45, scale: 100, rotate: 0, ...l };
+    const nl = { id: uid(), x: 50, y: count ? [30, 62, 46, 78, 20][(count - 1) % 5] : 50, scale: 100, rotate: 0, ...l };
     setLayers(side, ls => [...ls, nl]);
     setSelected(nl.id);
   };
@@ -113,7 +207,16 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
   const upload = useCallback(async file => {
     try {
       const src = await readImage(file);
-      add({ kind: "image", src, scale: 90 });
+      // start at a size where the whole image fits inside the print area (tall art on the
+      // hoodie's wide area would otherwise hang off the top and bottom)
+      const im = new Image();
+      im.src = src;
+      await im.decode().catch(() => {});
+      const p = g.views[side].print;
+      const areaAspect = (p.w * g.ratio) / p.h; // print area width / height
+      const imgAspect = im.naturalWidth && im.naturalHeight ? im.naturalHeight / im.naturalWidth : 1;
+      const fit = (0.9 * 100) / (0.7 * imgAspect * areaAspect); // scale where height = 90% of area
+      add({ kind: "image", src, trimmed: true, scale: Math.max(20, Math.round(Math.min(90, fit))) });
       onMessage("Image placed. Drag it, pull a corner to resize.");
     } catch (e) {
       onMessage(e.message);
@@ -167,7 +270,7 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
     if (spinning) return;
     setSpinning(true);
     ["left", "back", "right", "front"].forEach((v, k, a) =>
-      setTimeout(() => { go(v); if (k === a.length - 1) setSpinning(false); }, 700 * (k + 1))
+      setTimeout(() => { go(v); if (k === a.length - 1) setSpinning(false); }, 1600 * (k + 1))
     );
   };
 
@@ -200,13 +303,14 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
     if (selected) setTilt(0, 0);
   }, [selected]);
 
-  // drag the table sideways to turn the garment
+  // swipe the table sideways to see the next side (one side per swipe, no 3D spin)
   const tableDown = e => {
+    if (selected) return;
     const t = { x: e.clientX, done: false };
     turnRef.current = t;
     const move = ev => {
       const dx = ev.clientX - t.x;
-      if (!t.done && Math.abs(dx) > 70) {
+      if (!t.done && Math.abs(dx) > 140) {
         t.done = true;
         setView(v => VIEWS[(VIEWS.indexOf(v) + (dx < 0 ? 1 : -1) + 4) % 4]);
         setSelected(null);
@@ -221,9 +325,7 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
     window.addEventListener("pointerup", up);
   };
   const tableMove = e => {
-    const r = e.currentTarget.getBoundingClientRect();
     if (selected || turnRef.current) return setTilt(0, 0);
-    setTilt(((e.clientY - r.top) / r.height - 0.5) * -5, ((e.clientX - r.left) / r.width - 0.5) * 7);
   };
 
   const textTarget = sel?.kind === "text" ? sel : null;
@@ -239,9 +341,6 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
     <div className="table">
       {message && <p className="toast" key={message.k}>{message.text}</p>}
 
-      {/* the big side label behind the garment */}
-      <div className="side-word" aria-hidden="true" key={view}>{VIEW_LABEL[view]}</div>
-
       {/* ---------- garment ---------- */}
       <div
         className="table-centre"
@@ -249,7 +348,8 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
         onPointerMove={tableMove}
         onPointerLeave={() => setTilt(0, 0)}
       >
-        <div className="marks" aria-hidden="true"><i /><i /><i /><i /></div>
+        {/* the garment's soft shadow on the wall behind it */}
+        <div className="wall-shadow" aria-hidden="true" />
         <div className="garment-wrap" ref={wrapRef}>
           <FoldSwap
             k={foldKey}
@@ -288,7 +388,7 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
           <label className="slide"><span>Size</span><input type="range" min="10" max="300" value={sel.scale} onChange={e => update(sel.id, { scale: +e.target.value })} /></label>
           <label className="slide"><span>Turn</span><input type="range" min="-180" max="180" value={sel.rotate} onChange={e => update(sel.id, { rotate: +e.target.value })} /></label>
           <div className="sel-actions">
-            <button onClick={() => update(sel.id, { x: 50 })}>Centre</button>
+            <button onClick={() => update(sel.id, { x: 50, y: 50 })}>Centre</button>
             <button onClick={duplicate}>Copy</button>
             <button className="danger" onClick={() => remove(sel.id)}>Delete</button>
           </div>
@@ -334,10 +434,12 @@ export default function Editor({ design, setDesign, size, setSize, onContinue, o
               <h3>{textTarget ? "Edit text" : "Write something"}</h3>
               <textarea
                 rows={3}
+                maxLength={MAX_TEXT}
                 placeholder="Words worth wearing…"
                 value={textTarget ? textTarget.text : text.text}
-                onChange={e => (textTarget ? update(textTarget.id, { text: e.target.value }) : setText(t => ({ ...t, text: e.target.value })))}
+                onChange={e => (textTarget ? update(textTarget.id, { text: e.target.value.slice(0, MAX_TEXT) }) : setText(t => ({ ...t, text: e.target.value.slice(0, MAX_TEXT) })))}
               />
+              <p className="char-count">{(textTarget ? textTarget.text : text.text).length} / {MAX_TEXT}</p>
               <div className="font-list">
                 {FONTS.map(f => {
                   const on = (textTarget ? textTarget.font : text.font) === f.name;

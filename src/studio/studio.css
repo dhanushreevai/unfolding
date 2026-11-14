@@ -12,12 +12,12 @@
   --line2: #303030;
   --fg: #f1eee8;
   --muted: #8e8b86;
-  --accent: #d4ff3a;
+  --accent: #efe4cf; /* warm cream, like shop card stock (no neon) */
   --danger: #ff6a4d;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --fold: cubic-bezier(0.7, 0, 0.2, 1);
   --display: "Syne", "Inter", sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --mono: "Inter", system-ui, sans-serif; /* plain shop lettering, no "code" font */
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 .studio-root { color: var(--fg); font-family: "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
@@ -73,48 +73,22 @@ img { display: block; }
 .studio-screen { position: relative; height: calc(100vh - 90px); min-height: 600px; }
 .table {
   position: absolute; inset: 0; overflow: hidden;
+  /* a black display wall lit by one soft spotlight from above, like a boutique window */
   background:
-    radial-gradient(55% 60% at 50% 46%, rgba(255, 255, 255, 0.05), transparent 70%),
-    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px) 0 0 / 200px 200px,
-    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px) 0 0 / 200px 200px,
-    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px) 0 0 / 40px 40px,
-    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px) 0 0 / 40px 40px,
-    var(--bg);
+    radial-gradient(36% 50% at 50% 38%, rgba(255, 250, 240, 0.09), rgba(255, 250, 240, 0.03) 55%, transparent 80%),
+    #070707;
 }
-/* ruler edges */
-.table::before, .table::after { content: ""; position: absolute; z-index: 1; pointer-events: none; }
-.table::before {
-  top: 0; left: 0; right: 0; height: 14px;
-  background: repeating-linear-gradient(90deg, #3a3a3a 0 1px, transparent 1px 8px), repeating-linear-gradient(90deg, #5a5a5a 0 1px, transparent 1px 40px);
-  background-size: 100% 6px, 100% 14px; background-repeat: repeat-x;
-}
-.table::after {
-  top: 0; left: 0; bottom: 0; width: 14px;
-  background: repeating-linear-gradient(180deg, #3a3a3a 0 1px, transparent 1px 8px), repeating-linear-gradient(180deg, #5a5a5a 0 1px, transparent 1px 40px);
-  background-size: 6px 100%, 14px 100%; background-repeat: repeat-y;
-}
-.side-word {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -52%); z-index: 0; pointer-events: none;
-  font-family: var(--display); font-weight: 800; font-size: 25vw; letter-spacing: -0.05em; line-height: 1; text-transform: uppercase;
-  color: transparent; -webkit-text-stroke: 1px #262626; white-space: nowrap; will-change: transform, opacity;
-  animation: word-in 0.9s var(--ease) both;
-}
-@keyframes word-in { from { opacity: 0; transform: translate(-50%, -38%) scale(1.06); } }
-
 .table-centre {
-  position: absolute; left: 50%; top: 50%; z-index: 2; transform: translate(-50%, -53%);
-  width: min(520px, calc((100vh - 90px - 190px) * 0.9)); cursor: grab; touch-action: pan-y;
+  position: absolute; left: 50%; top: 52%; z-index: 2; transform: translate(-50%, -50%);
+  width: min(480px, calc((100vh - 90px - 230px) * 0.85)); cursor: grab; touch-action: pan-y;
 }
 .table-centre:active { cursor: grabbing; }
-.garment-wrap { transition: transform 0.5s var(--ease); transform-style: preserve-3d; will-change: transform; }
-.marks i { position: absolute; width: 22px; height: 22px; pointer-events: none; }
-.marks i::before, .marks i::after { content: ""; position: absolute; background: #4a4a4a; }
-.marks i::before { left: 50%; top: 0; bottom: 0; width: 1px; }
-.marks i::after { top: 50%; left: 0; right: 0; height: 1px; }
-.marks i:nth-child(1) { left: -30px; top: -10px; }
-.marks i:nth-child(2) { right: -30px; top: -10px; }
-.marks i:nth-child(3) { left: -30px; bottom: -10px; }
-.marks i:nth-child(4) { right: -30px; bottom: -10px; }
+.garment-wrap { position: relative; z-index: 1; }
+/* the garment's soft shadow on the wall behind it */
+.wall-shadow {
+  position: absolute; z-index: 0; inset: 8% 12% 4% 12%; transform: translate(16px, 22px);
+  background: rgba(0, 0, 0, 0.7); border-radius: 30% 30% 12% 12%; filter: blur(30px);
+}
 
 /* ---------- garment photo + recolour ---------- */
 .stage { position: relative; width: 100%; }
@@ -124,18 +98,32 @@ img { display: block; }
 .photo .tint { mix-blend-mode: multiply; -webkit-mask-size: 100% 100%; mask-size: 100% 100%; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
 .photo .sheen { mix-blend-mode: screen; opacity: 0.13; }
 
-/* turning to another side: old side squeezes away, new side turns in (GPU-only: transform + opacity) */
+/* turning to another side, like a garment on a display stand: the side facing you narrows and
+   slides away as it turns (and loses a little light), the next side widens in from the other
+   side. Flat (no perspective tilt or flip), so it reads as the real photo turning, not a card.
+   --sq is 1 for a colour change, which is a plain fade. */
 .swap { position: relative; width: 100%; }
-.swap-live { position: relative; will-change: transform, opacity; }
+.swap-live { position: relative; will-change: opacity, transform; }
 .swap-live.hide { visibility: hidden; }
-/* changing shot: a soft photographic crossfade with a slight drift in the turning direction,
-   like a product gallery (no squash or flip, which reads as a game) */
-.turn-out { position: absolute; inset: 0; pointer-events: none; will-change: transform, opacity; animation: turn-out 0.55s ease both; }
-.turn-in-a { animation: turn-in-a 0.65s cubic-bezier(0.25, 0.6, 0.3, 1) both; }
-.turn-in-b { animation: turn-in-b 0.65s cubic-bezier(0.25, 0.6, 0.3, 1) both; }
-@keyframes turn-out { to { opacity: 0; transform: translateX(calc(var(--dir) * -2.5%)); } }
-@keyframes turn-in-a { from { opacity: 0; transform: translateX(calc(var(--dir) * 2.5%)); } }
-@keyframes turn-in-b { from { opacity: 0; transform: translateX(calc(var(--dir) * 2.5%)); } }
+.turn-out { position: absolute; inset: 0; pointer-events: none; will-change: opacity, transform, filter; animation: turn-out 1s linear both; }
+.turn-in-a { animation: turn-in-a 1s linear both; }
+.turn-in-b { animation: turn-in-b 1s linear both; }
+/* one side turns away first, then the next turns in: they only overlap briefly at their
+   narrowest, so there's no double exposure */
+@keyframes turn-out {
+  0% { opacity: 1; transform: none; filter: brightness(1); animation-timing-function: cubic-bezier(0.4, 0, 0.8, 0.7); }
+  40% { opacity: 0.95; transform: translateX(calc(var(--dir) * -5% * (1 - var(--sq)))) scaleX(calc((1 + var(--sq)) / 2)); filter: brightness(0.85); }
+  52% { opacity: 0; transform: translateX(calc(var(--dir) * -7% * (1 - var(--sq)))) scaleX(var(--sq)); filter: brightness(0.75); }
+  100% { opacity: 0; transform: translateX(calc(var(--dir) * -7% * (1 - var(--sq)))) scaleX(var(--sq)); filter: brightness(0.75); }
+}
+@keyframes turn-in-a {
+  0%, 38% { opacity: 0; transform: translateX(calc(var(--dir) * 7% * (1 - var(--sq)))) scaleX(var(--sq)); filter: brightness(0.75); animation-timing-function: cubic-bezier(0.1, 0.4, 0.3, 1); }
+  100% { opacity: 1; transform: none; filter: brightness(1); }
+}
+@keyframes turn-in-b {
+  0%, 38% { opacity: 0; transform: translateX(calc(var(--dir) * 7% * (1 - var(--sq)))) scaleX(var(--sq)); filter: brightness(0.75); animation-timing-function: cubic-bezier(0.1, 0.4, 0.3, 1); }
+  100% { opacity: 1; transform: none; filter: brightness(1); }
+}
 
 /* accordion fold for a new colour or garment */
 .fold-layer { position: absolute; inset: 0; pointer-events: none; }
@@ -157,7 +145,7 @@ img { display: block; }
 .stage.editable:hover .print-area, .stage.editable .print-area.empty, .stage.editable .print-area.active { outline-color: rgba(140, 140, 140, 0.55); }
 .stage.editable .area-tag { opacity: 0; transition: opacity 0.3s; }
 .stage.editable:hover .area-tag, .stage.editable .print-area.empty .area-tag, .stage.editable .print-area.active .area-tag { opacity: 1; }
-.area-tag { position: absolute; left: 0; bottom: 100%; margin-bottom: 4px; font-family: var(--mono); font-size: 9.5px; color: rgba(140, 140, 140, 0.9); white-space: nowrap; pointer-events: none; }
+.area-tag { position: absolute; left: 50%; transform: translateX(-50%); bottom: 100%; margin-bottom: 4px; font-family: var(--mono); font-size: 9.5px; color: rgba(140, 140, 140, 0.9); white-space: nowrap; pointer-events: none; }
 .layer { position: absolute; user-select: none; touch-action: none; }
 .ink-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
 .ink { position: absolute; inset: 0; overflow: hidden; pointer-events: none; opacity: 0.95; }
@@ -176,7 +164,9 @@ img { display: block; }
 .rot-line { position: absolute; left: 50%; top: -30px; width: 1px; height: 24px; background: var(--accent); }
 .rot { position: absolute; left: 50%; top: -43px; width: 15px; height: 15px; margin-left: -7.5px; border-radius: 50%; background: var(--accent); border: 1.5px solid #000; cursor: grab; }
 .dims { position: absolute; left: 50%; top: calc(100% + 16px); font-family: var(--mono); font-size: 10px; color: #000; background: var(--accent); padding: 2px 6px; border-radius: 4px; white-space: nowrap; pointer-events: none; }
-.placeholder { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-family: var(--display); font-weight: 700; font-size: 8.5cqw; color: rgba(110, 110, 110, 0.85); transition: color 0.3s; }
+.placeholder { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-family: var(--display); font-weight: 700; font-size: min(8cqw, 11cqh); line-height: 1.15; padding: 0 8%; overflow-wrap: anywhere; color: rgba(110, 110, 110, 0.85); transition: color 0.3s; }
+/* hoodie: keep the label clear of the drawstrings that hang into the top of the print area */
+.placeholder.below-strings { align-items: end; padding-bottom: 9%; }
 .placeholder:hover { color: #1a1a1a; }
 
 /* ---------- floating islands ---------- */
@@ -404,3 +394,6 @@ h2.piece-name { border: none; }
 .gpt-styles button:hover { color: var(--fg); }
 .gpt-styles button.on { border-color: var(--accent); color: var(--accent); }
 .gpt .btn { justify-content: center; }
+
+/* text tool: characters used / allowed */
+.char-count { margin: -4px 2px 10px; text-align: right; font-size: 11px; color: var(--muted); }

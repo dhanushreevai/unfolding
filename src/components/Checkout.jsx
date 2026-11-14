@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import Showcase from './Showcase.jsx'
 import { OrderSpecs } from './Review.jsx'
-import { COUNTRIES, DELIVERY, PAYMENT_METHODS, formatPrice, priceOrder } from './garment.js'
+import { COUNTRIES, DELIVERY, DELIVERY_ZONES, PAYMENT_METHODS, deliveryFor, formatPrice, priceOrder, zoneOf } from './garment.js'
 import { placeOrder } from '../orderApi.js'
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -116,9 +116,9 @@ export function Details({ showcase, customer, setCustomer, delivery, setDelivery
           </Field>
         </div>
 
-        <h2 className="checkout-h2">Delivery <small>Fast. Reliable. Tracked.</small></h2>
+        <h2 className="checkout-h2">Delivery <small>Tracked · {DELIVERY_ZONES[zoneOf(customer.country)].name}</small></h2>
         <div className="options-row">
-          {Object.entries(DELIVERY).map(([key, d]) => (
+          {Object.keys(DELIVERY).map((key) => [key, deliveryFor(key, customer.country)]).map(([key, d]) => (
             <button type="button" key={key} className={`option-card${delivery === key ? ' on' : ''}`} onClick={() => setDelivery(key)}>
               <Radio on={delivery === key} />
               <span className="option-text"><b>{d.label}</b><small>{d.eta}</small></span>
@@ -149,7 +149,7 @@ const Badges = {
 
 export function Payment({ showcase, order, onBack, onPlaced }) {
   const { productKey, product, color, size, layers, previews, customer, delivery, paymentMethod, setPaymentMethod } = order
-  const totals = priceOrder({ product: productKey, layers, delivery })
+  const totals = priceOrder({ product: productKey, layers, delivery, country: customer.country })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 

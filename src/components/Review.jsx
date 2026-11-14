@@ -38,7 +38,7 @@ export default function Review({ productKey, product, design, color, size, layer
               <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3">
                 <path d="M2 7h11v9H2zM13 10h4l3 3v3h-7z" /><circle cx="6" cy="17.5" r="1.6" /><circle cx="16.5" cy="17.5" r="1.6" />
               </svg>
-              <div><small>Estimated delivery</small><span>3–5 working days</span></div>
+              <div><small>Estimated delivery</small><span>3–5 working days (UK)</span></div>
             </div>
             <div className="perk">
               <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3">

@@ -24,7 +24,7 @@ export default function FoldSwap({ k, state, live, still, mode = "fold", dir = 1
   const folding = anim?.mode === "fold";
 
   return (
-    <div className="swap" style={{ "--dir": anim?.dir || 1 }}>
+    <div className="swap" style={{ "--dir": anim?.dir || 1, "--sq": anim?.dir === 0 ? 1 : 0.42 }}>
       <div className={`swap-live ${turning ? (anim.id % 2 ? "turn-in-a" : "turn-in-b") : ""} ${folding ? "hide" : ""}`}>{live}</div>
 
       {turning && (

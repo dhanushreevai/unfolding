@@ -141,7 +141,7 @@ export default function AccountButton() {
     <>
       <button className="acct-trigger" onClick={() => setOpen(true)} aria-label={user ? 'Your account' : 'Sign in'}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" /></svg>
-        <span>{user ? displayName(user) : 'Sign in'}</span>
+        <span>{user ? `Hi, ${displayName(user).split(' ')[0]}` : 'Sign in'}</span>
       </button>
       {/* rendered at page level, above the header and the design studio */}
       {open && createPortal(

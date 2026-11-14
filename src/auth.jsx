@@ -23,7 +23,11 @@ export function AuthProvider({ children }) {
       setUser(data.session?.user ?? null)
       setReady(true)
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user ?? null))
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null)
+      // just came back from Google or the email link: reopen the page they started on
+      if (event === 'SIGNED_IN') setTimeout(reopenPage, 0)
+    })
     return () => sub.subscription.unsubscribe()
   }, [])
 
@@ -32,8 +36,26 @@ export function AuthProvider({ children }) {
 
 export const useAuth = () => useContext(AuthContext)
 
-// where to come back to after a sign-in link or Google, keeping the page they were on
-const returnTo = () => window.location.origin + window.location.pathname + window.location.hash
+/*
+  Where to come back to after a sign-in link or Google. Supabase hands the session back in the
+  URL's #fragment, which our page routes (#design-tshirt…) also use, so the return address has no
+  fragment: the page they were on is remembered here and reopened once they are signed in.
+*/
+const RETURN_KEY = 'up-return-page'
+const returnTo = () => {
+  try { sessionStorage.setItem(RETURN_KEY, window.location.hash) } catch { /* private mode */ }
+  try { localStorage.setItem(RETURN_KEY, window.location.hash) } catch { /* email link may open in a new tab */ }
+  return window.location.origin + window.location.pathname
+}
+function reopenPage() {
+  let hash = ''
+  try {
+    hash = sessionStorage.getItem(RETURN_KEY) || localStorage.getItem(RETURN_KEY) || ''
+    sessionStorage.removeItem(RETURN_KEY)
+    localStorage.removeItem(RETURN_KEY)
+  } catch { /* storage unavailable */ }
+  if (hash && hash.startsWith('#design-') && window.location.hash !== hash) window.location.hash = hash
+}
 
 export const signInWithGoogle = () =>
   supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: returnTo() } })
